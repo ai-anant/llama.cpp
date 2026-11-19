@@ -5,6 +5,7 @@
 #include "llama-impl.h"
 
 #include <map>
+#include <unordered_map>
 #include <vector>
 
 static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
@@ -1211,13 +1212,23 @@ const char * llm_arch_name(llm_arch arch) {
 }
 
 llm_arch llm_arch_from_string(const std::string & name) {
-    for (size_t i = 0; i <= (size_t) LLM_ARCH_UNKNOWN; ++i) {
-        if (name == llama_arch_info_get((llm_arch) i).name) {
-            return (llm_arch) i;
+    // one hash table built from the arch table; a linear scan would be up to 178
+    // string compares per call, and this runs for every GGUF file that is opened
+    static const std::unordered_map<std::string, llm_arch> ARCH_BY_NAME = [] {
+        std::unordered_map<std::string, llm_arch> map;
+        map.reserve((size_t) LLM_ARCH_UNKNOWN + 1);
+        for (size_t i = 0; i <= (size_t) LLM_ARCH_UNKNOWN; ++i) {
+            map.emplace(llama_arch_info_get((llm_arch) i).name, (llm_arch) i);
         }
+        return map;
+    }();
+
+    const auto it = ARCH_BY_NAME.find(name);
+    if (it == ARCH_BY_NAME.end()) {
+        return LLM_ARCH_UNKNOWN;
     }
 
-    return LLM_ARCH_UNKNOWN;
+    return it->second;
 }
 
 const llm_tensor_info & llm_tensor_info_for(llm_tensor tensor) {
