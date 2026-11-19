@@ -2276,6 +2276,148 @@ bool llama_vocab::impl::load_bpe_ranks(const gguf_context * ctx, const LLM_KV & 
     return true;
 }
 
+// BPE pre-tokenizers: the GGUF "tokenizer.ggml.pre" string selects a pre-tokenization
+// type plus a handful of normalization switches. This used to be a 320-line if/else
+// chain with 100 comparisons; it is data now.
+enum llama_pre_flag : uint16_t {
+    PRE_IGNORE_MERGES = 1u << 0,
+    PRE_ADD_BOS       = 1u << 1,
+    PRE_ADD_SEP       = 1u << 2,
+    PRE_NULL_BOS      = 1u << 3, // tokenizer has no BOS token
+    PRE_KEEP_SPACES   = 1u << 4, // clean_spaces = false
+    PRE_ESCAPE_WS     = 1u << 5, // escape_whitespaces = true
+    PRE_KEEP_CASE     = 1u << 6, // normalizer_opts.lowercase = false
+};
+
+struct llama_pre_rule {
+    const char *         name;
+    llama_vocab_pre_type type;
+    uint16_t             flags;
+};
+
+static constexpr llama_pre_rule LLAMA_PRE_RULES[] = {
+    { "afmoe",                      LLAMA_VOCAB_PRE_TYPE_AFMOE,              PRE_KEEP_SPACES },
+    { "bailingmoe",                 LLAMA_VOCAB_PRE_TYPE_BAILINGMOE,         PRE_KEEP_SPACES },
+    { "bailingmoe2",                LLAMA_VOCAB_PRE_TYPE_BAILINGMOE,         PRE_KEEP_SPACES },
+    { "llada-moe",                  LLAMA_VOCAB_PRE_TYPE_BAILINGMOE,         PRE_KEEP_SPACES },
+    { "bloom",                      LLAMA_VOCAB_PRE_TYPE_BLOOM,              0 },
+    { "chameleon",                  LLAMA_VOCAB_PRE_TYPE_CHAMELEON,          PRE_ADD_BOS | PRE_KEEP_SPACES },
+    { "chatglm-bpe",                LLAMA_VOCAB_PRE_TYPE_CHATGLM4,           PRE_NULL_BOS | PRE_KEEP_SPACES },
+    { "glm4",                       LLAMA_VOCAB_PRE_TYPE_CHATGLM4,           PRE_NULL_BOS | PRE_IGNORE_MERGES | PRE_KEEP_SPACES },
+    { "glm5",                       LLAMA_VOCAB_PRE_TYPE_CHATGLM4,           PRE_NULL_BOS | PRE_IGNORE_MERGES | PRE_KEEP_SPACES },
+    { "codeshell",                  LLAMA_VOCAB_PRE_TYPE_CODESHELL,          0 },
+    { "command-r",                  LLAMA_VOCAB_PRE_TYPE_COMMAND_R,          PRE_KEEP_SPACES },
+    { "dbrx",                       LLAMA_VOCAB_PRE_TYPE_DBRX,               PRE_KEEP_SPACES },
+    { "deepseek-v3",                LLAMA_VOCAB_PRE_TYPE_DEEPSEEK3_LLM,      PRE_KEEP_SPACES },
+    { "deepseek-coder",             LLAMA_VOCAB_PRE_TYPE_DEEPSEEK_CODER,     PRE_KEEP_SPACES },
+    { "deepseek-llm",               LLAMA_VOCAB_PRE_TYPE_DEEPSEEK_LLM,       PRE_KEEP_SPACES },
+    { "default",                    LLAMA_VOCAB_PRE_TYPE_DEFAULT,            0 },
+    { "domyn-small",                LLAMA_VOCAB_PRE_TYPE_DOMYN_SMALL,        PRE_ESCAPE_WS },
+    { "exaone",                     LLAMA_VOCAB_PRE_TYPE_EXAONE,             0 },
+    { "exaone-moe",                 LLAMA_VOCAB_PRE_TYPE_EXAONE_MOE,         0 },
+    { "falcon",                     LLAMA_VOCAB_PRE_TYPE_FALCON,             0 },
+    { "flint",                      LLAMA_VOCAB_PRE_TYPE_FLINT,              PRE_KEEP_SPACES },
+    { "gemma4",                     LLAMA_VOCAB_PRE_TYPE_GEMMA4,             PRE_ESCAPE_WS | PRE_KEEP_SPACES },
+    { "granite-embed-multi-311m",   LLAMA_VOCAB_PRE_TYPE_GEMMA4,             PRE_ESCAPE_WS | PRE_KEEP_SPACES },
+    { "a.x-4.0",                    LLAMA_VOCAB_PRE_TYPE_GPT2,               0 },
+    { "exaone4",                    LLAMA_VOCAB_PRE_TYPE_GPT2,               PRE_KEEP_SPACES },
+    { "gigachat",                   LLAMA_VOCAB_PRE_TYPE_GPT2,               0 },
+    { "gpt-2",                      LLAMA_VOCAB_PRE_TYPE_GPT2,               0 },
+    { "jina-de",                    LLAMA_VOCAB_PRE_TYPE_GPT2,               0 },
+    { "jina-es",                    LLAMA_VOCAB_PRE_TYPE_GPT2,               0 },
+    { "jina-v1-en",                 LLAMA_VOCAB_PRE_TYPE_GPT2,               PRE_ADD_SEP },
+    { "jina-v2-code",               LLAMA_VOCAB_PRE_TYPE_GPT2,               PRE_ADD_SEP },
+    { "jina-v2-de",                 LLAMA_VOCAB_PRE_TYPE_GPT2,               0 },
+    { "jina-v2-es",                 LLAMA_VOCAB_PRE_TYPE_GPT2,               0 },
+    { "mellum",                     LLAMA_VOCAB_PRE_TYPE_GPT2,               0 },
+    { "modern-bert",                LLAMA_VOCAB_PRE_TYPE_GPT2,               0 },
+    { "phi-2",                      LLAMA_VOCAB_PRE_TYPE_GPT2,               0 },
+    { "roberta-bpe",                LLAMA_VOCAB_PRE_TYPE_GPT2,               PRE_ADD_SEP },
+    { "gpt3-finnish",               LLAMA_VOCAB_PRE_TYPE_GPT3_FINNISH,       0 },
+    { "gpt-4o",                     LLAMA_VOCAB_PRE_TYPE_GPT4O,              PRE_KEEP_SPACES },
+    { "inkling2",                   LLAMA_VOCAB_PRE_TYPE_GPT4O,              PRE_NULL_BOS | PRE_KEEP_SPACES },
+    { "kanana2",                    LLAMA_VOCAB_PRE_TYPE_GPT4O,              PRE_KEEP_SPACES },
+    { "llama4",                     LLAMA_VOCAB_PRE_TYPE_GPT4O,              PRE_KEEP_SPACES },
+    { "talkie",                     LLAMA_VOCAB_PRE_TYPE_GPT4O,              PRE_KEEP_SPACES },
+    { "granite-docling",            LLAMA_VOCAB_PRE_TYPE_GRANITE_DOCLING,    PRE_KEEP_SPACES },
+    { "granite-embed-multi-97m",    LLAMA_VOCAB_PRE_TYPE_GRANITE_EMB_MULTI,  PRE_KEEP_SPACES | PRE_IGNORE_MERGES },
+    { "grok-2",                     LLAMA_VOCAB_PRE_TYPE_GROK_2,             PRE_KEEP_SPACES },
+    { "hunyuan",                    LLAMA_VOCAB_PRE_TYPE_HUNYUAN,            PRE_KEEP_SPACES },
+    { "hunyuan-dense",              LLAMA_VOCAB_PRE_TYPE_HUNYUAN_DENSE,      PRE_KEEP_SPACES },
+    { "hy_v4",                      LLAMA_VOCAB_PRE_TYPE_HY_V4,              PRE_KEEP_SPACES },
+    { "jais",                       LLAMA_VOCAB_PRE_TYPE_JAIS,               0 },
+    { "jais-2",                     LLAMA_VOCAB_PRE_TYPE_JAIS2,              0 },
+    { "joyai-llm",                  LLAMA_VOCAB_PRE_TYPE_JOYAI_LLM,          PRE_KEEP_SPACES },
+    { "k2-horizon",                 LLAMA_VOCAB_PRE_TYPE_K2_HORIZON,         PRE_KEEP_SPACES },
+    { "kimi-k2",                    LLAMA_VOCAB_PRE_TYPE_KIMI_K2,            PRE_KEEP_SPACES },
+    { "laguna",                     LLAMA_VOCAB_PRE_TYPE_LAGUNA,             PRE_KEEP_SPACES },
+    { "falcon-h1",                  LLAMA_VOCAB_PRE_TYPE_LLAMA3,             PRE_IGNORE_MERGES | PRE_ADD_BOS },
+    { "falcon3",                    LLAMA_VOCAB_PRE_TYPE_LLAMA3,             PRE_IGNORE_MERGES | PRE_ADD_BOS },
+    { "jina-v5-nano",               LLAMA_VOCAB_PRE_TYPE_LLAMA3,             PRE_IGNORE_MERGES | PRE_ADD_BOS },
+    { "lfm2",                       LLAMA_VOCAB_PRE_TYPE_LLAMA3,             PRE_IGNORE_MERGES | PRE_ADD_BOS | PRE_KEEP_SPACES },
+    { "llama-bpe",                  LLAMA_VOCAB_PRE_TYPE_LLAMA3,             PRE_IGNORE_MERGES | PRE_ADD_BOS },
+    { "llama-v3",                   LLAMA_VOCAB_PRE_TYPE_LLAMA3,             PRE_IGNORE_MERGES | PRE_ADD_BOS },
+    { "llama3",                     LLAMA_VOCAB_PRE_TYPE_LLAMA3,             PRE_IGNORE_MERGES | PRE_ADD_BOS },
+    { "midm-2.0",                   LLAMA_VOCAB_PRE_TYPE_LLAMA3,             PRE_IGNORE_MERGES | PRE_ADD_BOS },
+    { "mellum2",                    LLAMA_VOCAB_PRE_TYPE_MELLUM2,            PRE_KEEP_SPACES },
+    { "minerva-7b",                 LLAMA_VOCAB_PRE_TYPE_MINERVA,            0 },
+    { "minicpm5",                   LLAMA_VOCAB_PRE_TYPE_MINICPM5,           PRE_IGNORE_MERGES | PRE_KEEP_SPACES },
+    { "minimax-m2",                 LLAMA_VOCAB_PRE_TYPE_MINIMAX_M2,         PRE_KEEP_SPACES },
+    { "mmbert",                     LLAMA_VOCAB_PRE_TYPE_MMBERT,             PRE_ESCAPE_WS },
+    { "mpt",                        LLAMA_VOCAB_PRE_TYPE_MPT,                0 },
+    { "nemotron-3.5-embed",         LLAMA_VOCAB_PRE_TYPE_NEMOTRON_3_5_EMBD,  PRE_IGNORE_MERGES | PRE_ADD_BOS },
+    { "olmo",                       LLAMA_VOCAB_PRE_TYPE_OLMO,               0 },
+    { "poro-chat",                  LLAMA_VOCAB_PRE_TYPE_PORO,               PRE_KEEP_SPACES },
+    { "deepseek-r1-qwen",           LLAMA_VOCAB_PRE_TYPE_QWEN2,              PRE_KEEP_SPACES },
+    { "f2llmv2",                    LLAMA_VOCAB_PRE_TYPE_QWEN2,              PRE_KEEP_SPACES },
+    { "kormo",                      LLAMA_VOCAB_PRE_TYPE_QWEN2,              PRE_KEEP_SPACES },
+    { "megrez",                     LLAMA_VOCAB_PRE_TYPE_QWEN2,              0 },
+    { "qwen2",                      LLAMA_VOCAB_PRE_TYPE_QWEN2,              PRE_KEEP_SPACES },
+    { "qwen35",                     LLAMA_VOCAB_PRE_TYPE_QWEN35,             PRE_KEEP_SPACES },
+    { "refact",                     LLAMA_VOCAB_PRE_TYPE_REFACT,             0 },
+    { "sarvam-moe",                 LLAMA_VOCAB_PRE_TYPE_SARVAM_MOE,         PRE_ESCAPE_WS | PRE_KEEP_SPACES },
+    { "seed-coder",                 LLAMA_VOCAB_PRE_TYPE_SEED_CODER,         PRE_KEEP_SPACES },
+    { "smaug-bpe",                  LLAMA_VOCAB_PRE_TYPE_SMAUG,              0 },
+    { "smollm",                     LLAMA_VOCAB_PRE_TYPE_SMOLLM,             PRE_KEEP_SPACES },
+    { "solar-open",                 LLAMA_VOCAB_PRE_TYPE_SOLAR_OPEN,         PRE_KEEP_SPACES },
+    { "soprano",                    LLAMA_VOCAB_PRE_TYPE_SOPRANO,            0 },
+    { "spark2_5",                   LLAMA_VOCAB_PRE_TYPE_SPARK2_5,           PRE_KEEP_SPACES },
+    { "stablelm2",                  LLAMA_VOCAB_PRE_TYPE_STABLELM2,          0 },
+    { "starcoder",                  LLAMA_VOCAB_PRE_TYPE_STARCODER,          0 },
+    { "superbpe",                   LLAMA_VOCAB_PRE_TYPE_SUPERBPE,           PRE_KEEP_SPACES },
+    { "pixtral",                    LLAMA_VOCAB_PRE_TYPE_TEKKEN,             PRE_KEEP_SPACES | PRE_IGNORE_MERGES | PRE_ADD_BOS },
+    { "tekken",                     LLAMA_VOCAB_PRE_TYPE_TEKKEN,             PRE_KEEP_SPACES | PRE_IGNORE_MERGES | PRE_ADD_BOS },
+    { "tekken-num3",                LLAMA_VOCAB_PRE_TYPE_TEKKEN_NUM3,        PRE_KEEP_SPACES | PRE_IGNORE_MERGES | PRE_ADD_BOS },
+    { "cohere2moe",                 LLAMA_VOCAB_PRE_TYPE_TINY_AYA,           PRE_KEEP_SPACES },
+    { "tiny_aya",                   LLAMA_VOCAB_PRE_TYPE_TINY_AYA,           PRE_KEEP_SPACES },
+    { "trillion",                   LLAMA_VOCAB_PRE_TYPE_TRILLION,           PRE_KEEP_SPACES },
+    { "ufakzeka",                   LLAMA_VOCAB_PRE_TYPE_UFAKZEKA,           PRE_KEEP_SPACES },
+    { "viking",                     LLAMA_VOCAB_PRE_TYPE_VIKING,             PRE_KEEP_SPACES },
+    { "whitespace",                 LLAMA_VOCAB_PRE_TYPE_WHITESPACE,         PRE_KEEP_CASE },
+    { "youtu",                      LLAMA_VOCAB_PRE_TYPE_YOUTU,              PRE_KEEP_SPACES | PRE_IGNORE_MERGES },
+    { "zonos3",                     LLAMA_VOCAB_PRE_TYPE_ZONOS3,             PRE_KEEP_SPACES },
+};
+
+bool llama_vocab_pre_lookup(const std::string & pre, llama_vocab_pre_params & out) {
+    for (const auto & rule : LLAMA_PRE_RULES) {
+        if (pre != rule.name) {
+            continue;
+        }
+
+        out.type              = rule.type;
+        out.ignore_merges     = (rule.flags & PRE_IGNORE_MERGES) != 0;
+        out.add_bos           = (rule.flags & PRE_ADD_BOS)       != 0;
+        out.add_sep           = (rule.flags & PRE_ADD_SEP)       != 0;
+        out.null_bos          = (rule.flags & PRE_NULL_BOS)      != 0;
+        out.clean_spaces      = (rule.flags & PRE_KEEP_SPACES)   == 0;
+        out.escape_whitespaces = (rule.flags & PRE_ESCAPE_WS)    != 0;
+        out.lowercase         = (rule.flags & PRE_KEEP_CASE)     == 0;
+        return true;
+    }
+
+    return false;
+}
+
 void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
     struct gguf_context * ctx = ml.metadata;
 
@@ -2450,7 +2592,21 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
             add_space_prefix = false;
             escape_whitespaces = false;
             clean_spaces = true;
-            if (tokenizer_pre.empty()) {
+
+            llama_vocab_pre_params pre;
+            if (llama_vocab_pre_lookup(tokenizer_pre, pre)) {
+                pre_type = pre.type;
+
+                // each switch is only ever turned on: earlier load steps may already
+                // have set some of them, and the per-pre-tokenizer data never resets one
+                if (pre.ignore_merges)      { ignore_merges = true; }
+                if (pre.add_bos)            { add_bos = true; }
+                if (pre.add_sep)            { add_sep = true; }
+                if (pre.null_bos)           { special_bos_id = LLAMA_TOKEN_NULL; }
+                if (!pre.clean_spaces)      { clean_spaces = false; }
+                if (pre.escape_whitespaces) { escape_whitespaces = true; }
+                if (!pre.lowercase)         { normalizer_opts.lowercase = false; }
+            } else if (tokenizer_pre.empty()) {
                 LLAMA_LOG_WARN("%s: missing pre-tokenizer type, using: 'default'\n", __func__);
                 LLAMA_LOG_WARN("%s:                                             \n", __func__);
                 LLAMA_LOG_WARN("%s: ************************************        \n", __func__);
@@ -2459,319 +2615,11 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
                 LLAMA_LOG_WARN("%s: ************************************        \n", __func__);
                 LLAMA_LOG_WARN("%s:                                             \n", __func__);
                 pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
-            } else if (tokenizer_pre == "flint") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_FLINT;
-                clean_spaces = false;
-            } else if (tokenizer_pre == "default") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
-            } else if (tokenizer_pre == "minicpm5") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_MINICPM5;
-                ignore_merges = true;
-                clean_spaces = false;
-            } else if (
-                    tokenizer_pre == "llama3"   ||
-                    tokenizer_pre == "llama-v3" ||
-                    tokenizer_pre == "llama-bpe"||
-                    tokenizer_pre == "falcon3"  ||
-                    tokenizer_pre == "falcon-h1" ||
-                    tokenizer_pre == "midm-2.0" ||
-                    tokenizer_pre == "jina-v5-nano") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_LLAMA3;
-                ignore_merges = true;
-                add_bos = true;
-            } else if (
-                    tokenizer_pre == "lfm2") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_LLAMA3;
-                ignore_merges = true;
-                add_bos = true;
-                clean_spaces = false;
-            } else if (
-                    tokenizer_pre == "deepseek-llm") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_DEEPSEEK_LLM;
-                clean_spaces = false;
-            } else if (
-                    tokenizer_pre == "deepseek-coder") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_DEEPSEEK_CODER;
-                clean_spaces = false;
-            } else if (
-                    tokenizer_pre == "deepseek-v3") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_DEEPSEEK3_LLM;
-                clean_spaces = false;
-            } else if (
-                    tokenizer_pre == "spark2_5") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_SPARK2_5;
-                clean_spaces = false;
-            } else if (
-                    tokenizer_pre == "youtu") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_YOUTU;
-                clean_spaces = false;
-                ignore_merges = true;
-            } else if (
-                    tokenizer_pre == "falcon") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_FALCON;
-            } else if (
-                    tokenizer_pre == "mpt") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_MPT;
-            } else if (
-                    tokenizer_pre == "starcoder") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_STARCODER;
-            } else if (
-                    tokenizer_pre == "gpt-2"   ||
-                    tokenizer_pre == "phi-2"   ||
-                    tokenizer_pre == "jina-es" ||
-                    tokenizer_pre == "jina-de" ||
-                    tokenizer_pre == "gigachat"   ||
-                    tokenizer_pre == "jina-v2-es" ||
-                    tokenizer_pre == "jina-v2-de" ||
-                    tokenizer_pre == "a.x-4.0" ||
-                    tokenizer_pre == "mellum"  ||
-                    tokenizer_pre == "modern-bert") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_GPT2;
-            } else if (
-                    tokenizer_pre == "jais-2") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_JAIS2;
-            } else if (
-                    tokenizer_pre == "gemma4" ||
-                    tokenizer_pre == "granite-embed-multi-311m") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_GEMMA4;
-                escape_whitespaces = true;
-                clean_spaces = false;
-            } else if (
-                    tokenizer_pre == "mmbert") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_MMBERT;
-                escape_whitespaces = true;
-            } else if (
-                    tokenizer_pre == "sarvam-moe") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_SARVAM_MOE;
-                escape_whitespaces = true;
-                clean_spaces = false;
-            } else if (
-                    tokenizer_pre == "jina-v1-en" ||
-                    tokenizer_pre == "jina-v2-code" ||
-                    tokenizer_pre == "roberta-bpe") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_GPT2;
-                add_sep = true;
-            } else if (
-                    tokenizer_pre == "whitespace") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_WHITESPACE;
-                normalizer_opts.lowercase = false;
-            } else if (
-                    tokenizer_pre == "refact") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_REFACT;
-            } else if (
-                tokenizer_pre == "command-r") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_COMMAND_R;
-                clean_spaces = false;
-            } else if (
-                    tokenizer_pre == "qwen2" ||
-                    tokenizer_pre == "deepseek-r1-qwen" ||
-                    tokenizer_pre == "kormo" ||
-                    tokenizer_pre == "f2llmv2") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_QWEN2;
-                clean_spaces = false;
-            } else if (
-                    tokenizer_pre == "qwen35") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_QWEN35;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "stablelm2") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_STABLELM2;
-            } else if (
-                tokenizer_pre == "olmo") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_OLMO;
-            } else if (
-                tokenizer_pre == "dbrx") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_DBRX;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "smaug-bpe") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_SMAUG;
-            } else if (
-                tokenizer_pre == "poro-chat") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_PORO;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "chatglm-bpe") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_CHATGLM4;
-                special_bos_id = LLAMA_TOKEN_NULL;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "glm4" ||
-                tokenizer_pre == "glm5") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_CHATGLM4;
-                special_bos_id = LLAMA_TOKEN_NULL;
-                ignore_merges = true;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "viking") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_VIKING;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "jais") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_JAIS;
-            } else if (
-                tokenizer_pre == "tekken" ||
-                tokenizer_pre == "pixtral") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_TEKKEN;
-                clean_spaces = false;
-                ignore_merges = true;
-                add_bos = true;
-            } else if (
-                tokenizer_pre == "tekken-num3") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_TEKKEN_NUM3;
-                clean_spaces = false;
-                ignore_merges = true;
-                add_bos = true;
-            } else if (
-                tokenizer_pre == "smollm") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_SMOLLM;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "codeshell") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_CODESHELL;
-            } else if (
-                tokenizer_pre == "bloom") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_BLOOM;
-            } else if (
-                tokenizer_pre == "gpt3-finnish") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_GPT3_FINNISH;
-            } else if (
-                tokenizer_pre == "exaone") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_EXAONE;
-            } else if (
-                tokenizer_pre == "exaone4") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_GPT2;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "exaone-moe") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_EXAONE_MOE;
-            } else if (
-                tokenizer_pre == "chameleon") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_CHAMELEON;
-                add_bos = true;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "minerva-7b") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_MINERVA;
-            } else if (
-                tokenizer_pre == "domyn-small") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_DOMYN_SMALL;
-                escape_whitespaces = true;
-            } else if (
-                tokenizer_pre == "megrez") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_QWEN2;
-            } else if (
-                tokenizer_pre == "gpt-4o" ||
-                tokenizer_pre == "llama4" ||
-                tokenizer_pre == "kanana2" ||
-                tokenizer_pre == "talkie") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_GPT4O;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "inkling2") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_GPT4O;
-                special_bos_id = LLAMA_TOKEN_NULL;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "granite-embed-multi-97m") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_GRANITE_EMB_MULTI;
-                clean_spaces = false;
-                ignore_merges = true;
-            } else if (
-                tokenizer_pre == "tiny_aya" ||
-                tokenizer_pre == "cohere2moe") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_TINY_AYA;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "superbpe") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_SUPERBPE;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "trillion") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_TRILLION;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "granite-docling") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_GRANITE_DOCLING;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "bailingmoe" ||
-                tokenizer_pre == "bailingmoe2" ||
-                tokenizer_pre == "llada-moe") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_BAILINGMOE;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "seed-coder") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_SEED_CODER;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "hunyuan") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_HUNYUAN;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "hunyuan-dense") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_HUNYUAN_DENSE;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "hy_v4") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_HY_V4;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "joyai-llm") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_JOYAI_LLM;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "kimi-k2") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_KIMI_K2;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "ufakzeka") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_UFAKZEKA;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "grok-2") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_GROK_2;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "afmoe") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_AFMOE;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "laguna") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_LAGUNA;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "minimax-m2") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_MINIMAX_M2;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "solar-open") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_SOLAR_OPEN;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "mellum2") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_MELLUM2;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "k2-horizon") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_K2_HORIZON;
-                clean_spaces = false;
-            } else if (
-                tokenizer_pre == "nemotron-3.5-embed") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_NEMOTRON_3_5_EMBD;
-                ignore_merges = true;
-                add_bos = true;
-            } else if (
-                tokenizer_pre == "soprano") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_SOPRANO;
-            } else if (
-                tokenizer_pre == "zonos3") {
-                pre_type = LLAMA_VOCAB_PRE_TYPE_ZONOS3;
-                clean_spaces = false;
             } else {
                 throw std::runtime_error(format("unknown pre-tokenizer type: '%s'", tokenizer_pre.c_str()));
             }
         } else if (type == LLAMA_VOCAB_TYPE_SPM) {
+
             pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
             add_space_prefix = true;
             clean_spaces = false;

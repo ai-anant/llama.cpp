@@ -78,6 +78,22 @@ enum llama_vocab_pre_type {
     LLAMA_VOCAB_PRE_TYPE_ZONOS3            = 67,
 };
 
+// Settings a BPE pre-tokenizer name ("tokenizer.ggml.pre") selects. See
+// llama_vocab_pre_lookup() for the table; defaults describe "default".
+struct llama_vocab_pre_params {
+    llama_vocab_pre_type type                = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+    bool                 ignore_merges       = false;
+    bool                 add_bos             = false;
+    bool                 add_sep             = false;
+    bool                 null_bos            = false; // tokenizer has no BOS token
+    bool                 clean_spaces        = true;
+    bool                 escape_whitespaces  = false;
+    bool                 lowercase           = true;
+};
+
+// Fills `out` for a known pre-tokenizer name; false if `pre` is not in the table
+bool llama_vocab_pre_lookup(const std::string & pre, llama_vocab_pre_params & out);
+
 // HF Metaspace pre-tokenizer prepend_scheme
 enum llama_metaspace_prepend_scheme {
     LLAMA_METASPACE_PREPEND_SCHEME_NEVER  = 0,
