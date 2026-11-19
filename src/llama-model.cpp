@@ -695,10 +695,9 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             GGML_ASSERT(tensor->ne[axis] == 3*conv_state_size);
             return {{conv_state_size, 3}};
         }
-        // TODO: deduplicate condition [TAG_SPLIT_QGATE_QWEN]
         // zonos3 has the qwen35 GDN layout, its attention layers have no fused qkv
-        if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE || ud->model->arch == LLM_ARCH_CLEF || ud->model->arch == LLM_ARCH_CLOVER_MOE ||
-                ud->model->arch == LLM_ARCH_QWEN4EXP || ud->model->arch == LLM_ARCH_ZONOS3) {
+        if (llama_arch_has_flag(ud->model->arch, LLAMA_ARCH_FLAG_ATTN_Q_GATE) ||
+                ud->model->arch == LLM_ARCH_ZONOS3) {
 
             // fused full attention layers with Q gate tensors that need n_embd doubled:
             if (!hparams.is_recr(il) && (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_qkv_bias))) {
@@ -896,10 +895,8 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             }
             if (std::regex_match(tensor_name, pattern_q_weight) || std::regex_match(tensor_name, pattern_q_bias)) {
                 GGML_ASSERT(segments.size() == 1);
-                // some models have Q gate tensors, for those cases the granularity needs to be doubled:
-                // TODO: deduplicate condition [TAG_SPLIT_QGATE_QWEN]
-                if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE || ud->model->arch == LLM_ARCH_CLEF || ud->model->arch == LLM_ARCH_CLOVER_MOE ||
-                        ud->model->arch == LLM_ARCH_QWEN4EXP) {
+                // some models have Q gate tensors, for those cases the granularity needs to be doubled
+                if (llama_arch_has_flag(ud->model->arch, LLAMA_ARCH_FLAG_ATTN_Q_GATE)) {
                     return {std::lcm(2*n_embd_q, blck_size_perf)};
                 }
                 return {granularity_q};
@@ -930,10 +927,8 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
                 return {is_v ? granularity_v : granularity_kv};
             }
             if (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_qkv_bias)) {
-                // fused full attention layers need Q gate tensors handled like above:
-                // TODO: deduplicate condition [TAG_SPLIT_QGATE_QWEN]
-                if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE || ud->model->arch == LLM_ARCH_CLEF || ud->model->arch == LLM_ARCH_CLOVER_MOE ||
-                        ud->model->arch == LLM_ARCH_QWEN4EXP) {
+                // fused full attention layers need Q gate tensors handled like above
+                if (llama_arch_has_flag(ud->model->arch, LLAMA_ARCH_FLAG_ATTN_Q_GATE)) {
                     return {std::lcm(2*n_embd_q, blck_size_perf), granularity_kv};
                 }
                 if (segments.size() == 3) {

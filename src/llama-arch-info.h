@@ -31,6 +31,7 @@ enum llama_arch_flag : uint32_t {
     LLAMA_ARCH_FLAG_MIXED_BATCH = 1u << 4, // token and embedding inputs in one batch
     LLAMA_ARCH_FLAG_SM_TENSOR   = 1u << 5, // uses the SM tensor family
     LLAMA_ARCH_FLAG_SAVE        = 1u << 6, // model can be re-saved
+    LLAMA_ARCH_FLAG_ATTN_Q_GATE = 1u << 7, // attn_q carries a gate, so Q tensors are twice as wide
 };
 
 struct llama_arch_info {

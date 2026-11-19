@@ -26,6 +26,7 @@
 #define F_MIXED_BATCH LLAMA_ARCH_FLAG_MIXED_BATCH
 #define F_SM_TENSOR   LLAMA_ARCH_FLAG_SM_TENSOR
 #define F_SAVE        LLAMA_ARCH_FLAG_SAVE
+#define F_ATTN_Q_GATE LLAMA_ARCH_FLAG_ATTN_Q_GATE
 
 static constexpr llama_arch_info LLAMA_ARCH_INFO[] = {
     { LLM_ARCH_CLIP,              "clip",             LLAMA_ROPE_TYPE_NONE,    F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
@@ -59,15 +60,15 @@ static constexpr llama_arch_info LLAMA_ARCH_INFO[] = {
     { LLM_ARCH_QWEN3,             "qwen3",            LLAMA_ROPE_TYPE_NEOX,    F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
     { LLM_ARCH_QWEN3MOE,          "qwen3moe",         LLAMA_ROPE_TYPE_NEOX,    F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
     { LLM_ARCH_FLINT,             "flint",            LLAMA_ROPE_TYPE_NEOX,    F_MIXED_BATCH | F_SAVE },
-    { LLM_ARCH_QWEN3NEXT,         "qwen3next",        LLAMA_ROPE_TYPE_NEOX,    F_HYBRID | F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
+    { LLM_ARCH_QWEN3NEXT,         "qwen3next",        LLAMA_ROPE_TYPE_NEOX,    F_HYBRID | F_ATTN_Q_GATE | F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
     { LLM_ARCH_QWEN3VL,           "qwen3vl",          LLAMA_ROPE_TYPE_IMROPE,  F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
     { LLM_ARCH_QWEN3VLMOE,        "qwen3vlmoe",       LLAMA_ROPE_TYPE_IMROPE,  F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
-    { LLM_ARCH_QWEN35,            "qwen35",           LLAMA_ROPE_TYPE_IMROPE,  F_HYBRID | F_RS_ROLLBACK | F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
-    { LLM_ARCH_QWEN35MOE,         "qwen35moe",        LLAMA_ROPE_TYPE_IMROPE,  F_HYBRID | F_RS_ROLLBACK | F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
-    { LLM_ARCH_CLEF,              "clef",             LLAMA_ROPE_TYPE_IMROPE,  F_MIXED_BATCH | F_SM_TENSOR },
+    { LLM_ARCH_QWEN35,            "qwen35",           LLAMA_ROPE_TYPE_IMROPE,  F_HYBRID | F_RS_ROLLBACK | F_ATTN_Q_GATE | F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
+    { LLM_ARCH_QWEN35MOE,         "qwen35moe",        LLAMA_ROPE_TYPE_IMROPE,  F_HYBRID | F_RS_ROLLBACK | F_ATTN_Q_GATE | F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
+    { LLM_ARCH_CLEF,              "clef",             LLAMA_ROPE_TYPE_IMROPE,  F_ATTN_Q_GATE | F_MIXED_BATCH | F_SM_TENSOR },
     { LLM_ARCH_VLLM_DECISION2,    "vllm-decision2",   LLAMA_ROPE_TYPE_NEOX,    F_MIXED_BATCH | F_SM_TENSOR },
-    { LLM_ARCH_CLOVER_MOE,        "clover_moe",       LLAMA_ROPE_TYPE_NEOX,    F_HYBRID | F_RS_ROLLBACK | F_MIXED_BATCH | F_SAVE },
-    { LLM_ARCH_QWEN4EXP,          "qwen4exp",         LLAMA_ROPE_TYPE_IMROPE,  F_HYBRID | F_RS_ROLLBACK | F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
+    { LLM_ARCH_CLOVER_MOE,        "clover_moe",       LLAMA_ROPE_TYPE_NEOX,    F_HYBRID | F_RS_ROLLBACK | F_ATTN_Q_GATE | F_MIXED_BATCH | F_SAVE },
+    { LLM_ARCH_QWEN4EXP,          "qwen4exp",         LLAMA_ROPE_TYPE_IMROPE,  F_HYBRID | F_RS_ROLLBACK | F_ATTN_Q_GATE | F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
     { LLM_ARCH_PHI2,              "phi2",             LLAMA_ROPE_TYPE_NEOX,    F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
     { LLM_ARCH_PHI3,              "phi3",             LLAMA_ROPE_TYPE_NEOX,    F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
     { LLM_ARCH_PHIMOE,            "phimoe",           LLAMA_ROPE_TYPE_NEOX,    F_MIXED_BATCH | F_SM_TENSOR | F_SAVE },
@@ -215,6 +216,7 @@ static constexpr llama_arch_info LLAMA_ARCH_INFO[] = {
 #undef F_MIXED_BATCH
 #undef F_SM_TENSOR
 #undef F_SAVE
+#undef F_ATTN_Q_GATE
 
 static constexpr size_t LLAMA_ARCH_INFO_COUNT = sizeof(LLAMA_ARCH_INFO) / sizeof(LLAMA_ARCH_INFO[0]);
 

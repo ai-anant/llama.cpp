@@ -87,6 +87,23 @@ int main() {
     CHECK(llama_arch_rope_type(LLM_ARCH_GLM4_MOE, hp) == LLAMA_ROPE_TYPE_MROPE,
           "glm4-moe with mrope sections should use MROPE");
 
+    // the q-gate flag replaced three inline copies of a six-arch list
+    static const llm_arch q_gate_archs[] = {
+        LLM_ARCH_QWEN3NEXT, LLM_ARCH_QWEN35, LLM_ARCH_QWEN35MOE,
+        LLM_ARCH_CLEF, LLM_ARCH_CLOVER_MOE, LLM_ARCH_QWEN4EXP,
+    };
+    for (const llm_arch arch : q_gate_archs) {
+        CHECK(llama_arch_has_flag(arch, LLAMA_ARCH_FLAG_ATTN_Q_GATE),
+              "arch %s should carry the attn_q gate flag", llama_arch_info_get(arch).name);
+    }
+    int n_q_gate = 0;
+    for (int i = 0; i < n_arch; ++i) {
+        if (llama_arch_has_flag((llm_arch) i, LLAMA_ARCH_FLAG_ATTN_Q_GATE)) {
+            ++n_q_gate;
+        }
+    }
+    CHECK(n_q_gate == 6, "expected 6 q-gate arches, table has %d", n_q_gate);
+
     if (g_failures == 0) {
         printf("test-arch-info: %d architectures OK\n", n_arch);
         return 0;
