@@ -1757,6 +1757,107 @@ static void ggml_compute_forward_mul_mat_id(
 
 /////////////////////////////////
 
+// op -> compute implementation. View-like ops have nothing to compute and no
+// entry here; adding an op means adding a row instead of a case in a 400-line
+// switch, and GGML_OP_COUNT is covered by the bounds assert below.
+typedef void (*ggml_compute_forward_fn)(const struct ggml_compute_params * params, struct ggml_tensor * tensor);
+
+static const ggml_compute_forward_fn GGML_COMPUTE_FORWARD[GGML_OP_COUNT] = {
+    [GGML_OP_DUP] = ggml_compute_forward_dup,
+    [GGML_OP_ADD] = ggml_compute_forward_add,
+    [GGML_OP_ADD_ID] = ggml_compute_forward_add_id,
+    [GGML_OP_ACC] = ggml_compute_forward_acc,
+    [GGML_OP_SUB] = ggml_compute_forward_sub,
+    [GGML_OP_MUL] = ggml_compute_forward_mul,
+    [GGML_OP_DIV] = ggml_compute_forward_div,
+    [GGML_OP_SQR] = ggml_compute_forward_sqr,
+    [GGML_OP_SQRT] = ggml_compute_forward_sqrt,
+    [GGML_OP_LOG] = ggml_compute_forward_log,
+    [GGML_OP_SIN] = ggml_compute_forward_sin,
+    [GGML_OP_COS] = ggml_compute_forward_cos,
+    [GGML_OP_SUM] = ggml_compute_forward_sum,
+    [GGML_OP_SUM_ROWS] = ggml_compute_forward_sum_rows,
+    [GGML_OP_CUMSUM] = ggml_compute_forward_cumsum,
+    [GGML_OP_MEAN] = ggml_compute_forward_mean,
+    [GGML_OP_ARGMAX] = ggml_compute_forward_argmax,
+    [GGML_OP_COUNT_EQUAL] = ggml_compute_forward_count_equal,
+    [GGML_OP_REPEAT] = ggml_compute_forward_repeat,
+    [GGML_OP_REPEAT_BACK] = ggml_compute_forward_repeat_back,
+    [GGML_OP_CONCAT] = ggml_compute_forward_concat,
+    [GGML_OP_SILU_BACK] = ggml_compute_forward_silu_back,
+    [GGML_OP_NORM] = ggml_compute_forward_norm,
+    [GGML_OP_RMS_NORM] = ggml_compute_forward_rms_norm,
+    [GGML_OP_RMS_NORM_BACK] = ggml_compute_forward_rms_norm_back,
+    [GGML_OP_GROUP_NORM] = ggml_compute_forward_group_norm,
+    [GGML_OP_L2_NORM] = ggml_compute_forward_l2_norm,
+    [GGML_OP_MUL_MAT] = ggml_compute_forward_mul_mat,
+    [GGML_OP_MUL_MAT_ID] = ggml_compute_forward_mul_mat_id,
+    [GGML_OP_OUT_PROD] = ggml_compute_forward_out_prod,
+    [GGML_OP_SCALE] = ggml_compute_forward_scale,
+    [GGML_OP_SET] = ggml_compute_forward_set,
+    [GGML_OP_CPY] = ggml_compute_forward_cpy,
+    [GGML_OP_CONT] = ggml_compute_forward_cont,
+    [GGML_OP_GET_ROWS] = ggml_compute_forward_get_rows,
+    [GGML_OP_GET_ROWS_BACK] = ggml_compute_forward_get_rows_back,
+    [GGML_OP_SET_ROWS] = ggml_compute_forward_set_rows,
+    [GGML_OP_DIAG] = ggml_compute_forward_diag,
+    [GGML_OP_SOFT_MAX] = ggml_compute_forward_soft_max,
+    [GGML_OP_SOFT_MAX_BACK] = ggml_compute_forward_soft_max_ext_back,
+    [GGML_OP_ROPE] = ggml_compute_forward_rope,
+    [GGML_OP_ROPE_BACK] = ggml_compute_forward_rope_back,
+    [GGML_OP_CLAMP] = ggml_compute_forward_clamp,
+    [GGML_OP_CONV_TRANSPOSE_1D] = ggml_compute_forward_conv_transpose_1d,
+    [GGML_OP_IM2COL] = ggml_compute_forward_im2col,
+    [GGML_OP_IM2COL_BACK] = ggml_compute_forward_im2col_back_f32,
+    [GGML_OP_IM2COL_3D] = ggml_compute_forward_im2col_3d,
+    [GGML_OP_COL2IM_1D] = ggml_compute_forward_col2im_1d,
+    [GGML_OP_CONV_2D] = ggml_compute_forward_conv_2d,
+    [GGML_OP_CONV_3D] = ggml_compute_forward_conv_3d,
+    [GGML_OP_CONV_2D_DW] = ggml_compute_forward_conv_2d_dw,
+    [GGML_OP_CONV_TRANSPOSE_2D] = ggml_compute_forward_conv_transpose_2d,
+    [GGML_OP_POOL_1D] = ggml_compute_forward_pool_1d,
+    [GGML_OP_POOL_2D] = ggml_compute_forward_pool_2d,
+    [GGML_OP_POOL_2D_BACK] = ggml_compute_forward_pool_2d_back,
+    [GGML_OP_UPSCALE] = ggml_compute_forward_upscale,
+    [GGML_OP_PAD] = ggml_compute_forward_pad,
+    [GGML_OP_PAD_REFLECT_1D] = ggml_compute_forward_pad_reflect_1d,
+    [GGML_OP_ROLL] = ggml_compute_forward_roll,
+    [GGML_OP_ARANGE] = ggml_compute_forward_arange,
+    [GGML_OP_TIMESTEP_EMBEDDING] = ggml_compute_forward_timestep_embedding,
+    [GGML_OP_ARGSORT] = ggml_compute_forward_argsort,
+    [GGML_OP_TOP_K] = ggml_compute_forward_top_k,
+    [GGML_OP_LEAKY_RELU] = ggml_compute_forward_leaky_relu,
+    [GGML_OP_TRI] = ggml_compute_forward_tri,
+    [GGML_OP_FILL] = ggml_compute_forward_fill,
+    [GGML_OP_FLASH_ATTN_EXT] = ggml_compute_forward_flash_attn_ext,
+    [GGML_OP_SSM_CONV] = ggml_compute_forward_ssm_conv,
+    [GGML_OP_SSM_SCAN] = ggml_compute_forward_ssm_scan,
+    [GGML_OP_WIN_PART] = ggml_compute_forward_win_part,
+    [GGML_OP_WIN_UNPART] = ggml_compute_forward_win_unpart,
+    [GGML_OP_UNARY] = ggml_compute_forward_unary,
+    [GGML_OP_GLU] = ggml_compute_forward_glu,
+    [GGML_OP_GET_REL_POS] = ggml_compute_forward_get_rel_pos,
+    [GGML_OP_ADD_REL_POS] = ggml_compute_forward_add_rel_pos,
+    [GGML_OP_RWKV_WKV6] = ggml_compute_forward_rwkv_wkv6,
+    [GGML_OP_GATED_LINEAR_ATTN] = ggml_compute_forward_gla,
+    [GGML_OP_RWKV_WKV7] = ggml_compute_forward_rwkv_wkv7,
+    [GGML_OP_SOLVE_TRI] = ggml_compute_forward_solve_tri,
+    [GGML_OP_GATED_DELTA_NET] = ggml_compute_forward_gated_delta_net,
+    [GGML_OP_LIGHTNING_INDEXER] = ggml_compute_forward_lightning_indexer,
+    [GGML_OP_DSV4_HC_COMB] = ggml_compute_forward_dsv4_hc_comb,
+    [GGML_OP_DSV4_HC_PRE] = ggml_compute_forward_dsv4_hc_pre,
+    [GGML_OP_DSV4_HC_POST] = ggml_compute_forward_dsv4_hc_post,
+    [GGML_OP_TOP_K_MASK] = ggml_compute_forward_top_k_mask,
+    [GGML_OP_MAP_CUSTOM1] = ggml_compute_forward_map_custom1,
+    [GGML_OP_MAP_CUSTOM2] = ggml_compute_forward_map_custom2,
+    [GGML_OP_MAP_CUSTOM3] = ggml_compute_forward_map_custom3,
+    [GGML_OP_CUSTOM] = ggml_compute_forward_custom,
+    [GGML_OP_CROSS_ENTROPY_LOSS] = ggml_compute_forward_cross_entropy_loss,
+    [GGML_OP_CROSS_ENTROPY_LOSS_BACK] = ggml_compute_forward_cross_entropy_loss_back,
+    [GGML_OP_OPT_STEP_ADAMW] = ggml_compute_forward_opt_step_adamw,
+    [GGML_OP_OPT_STEP_SGD] = ggml_compute_forward_opt_step_sgd,
+};
+
 static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
     GGML_ASSERT(params);
 
@@ -1769,419 +1870,26 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
         return;
     }
 
-    switch (tensor->op) {
-        case GGML_OP_DUP:
-            {
-                ggml_compute_forward_dup(params, tensor);
-            } break;
-        case GGML_OP_ADD:
-            {
-                ggml_compute_forward_add(params, tensor);
-            } break;
-        case GGML_OP_ADD_ID:
-            {
-                ggml_compute_forward_add_id(params, tensor);
-            } break;
-        case GGML_OP_ACC:
-            {
-                ggml_compute_forward_acc(params, tensor);
-            } break;
-        case GGML_OP_SUB:
-            {
-                ggml_compute_forward_sub(params, tensor);
-            } break;
-        case GGML_OP_MUL:
-            {
-                ggml_compute_forward_mul(params, tensor);
-            } break;
-        case GGML_OP_DIV:
-            {
-                ggml_compute_forward_div(params, tensor);
-            } break;
-        case GGML_OP_SQR:
-            {
-                ggml_compute_forward_sqr(params, tensor);
-            } break;
-        case GGML_OP_SQRT:
-            {
-                ggml_compute_forward_sqrt(params, tensor);
-            } break;
-        case GGML_OP_LOG:
-            {
-                ggml_compute_forward_log(params, tensor);
-            } break;
-        case GGML_OP_SIN:
-            {
-                ggml_compute_forward_sin(params, tensor);
-            } break;
-        case GGML_OP_COS:
-            {
-                ggml_compute_forward_cos(params, tensor);
-            } break;
-        case GGML_OP_SUM:
-            {
-                ggml_compute_forward_sum(params, tensor);
-            } break;
-        case GGML_OP_SUM_ROWS:
-            {
-                ggml_compute_forward_sum_rows(params, tensor);
-            } break;
-        case GGML_OP_CUMSUM:
-            {
-                ggml_compute_forward_cumsum(params, tensor);
-            } break;
-        case GGML_OP_MEAN:
-            {
-                ggml_compute_forward_mean(params, tensor);
-            } break;
-        case GGML_OP_ARGMAX:
-            {
-                ggml_compute_forward_argmax(params, tensor);
-            } break;
-        case GGML_OP_COUNT_EQUAL:
-            {
-                ggml_compute_forward_count_equal(params, tensor);
-            } break;
-        case GGML_OP_REPEAT:
-            {
-                ggml_compute_forward_repeat(params, tensor);
-            } break;
-        case GGML_OP_REPEAT_BACK:
-            {
-                ggml_compute_forward_repeat_back(params, tensor);
-            } break;
-        case GGML_OP_CONCAT:
-            {
-                ggml_compute_forward_concat(params, tensor);
-            } break;
-        case GGML_OP_SILU_BACK:
-            {
-                ggml_compute_forward_silu_back(params, tensor);
-            } break;
-        case GGML_OP_NORM:
-            {
-                ggml_compute_forward_norm(params, tensor);
-            } break;
-        case GGML_OP_RMS_NORM:
-            {
-                ggml_compute_forward_rms_norm(params, tensor);
-            } break;
-        case GGML_OP_RMS_NORM_BACK:
-            {
-                ggml_compute_forward_rms_norm_back(params, tensor);
-            } break;
-        case GGML_OP_GROUP_NORM:
-            {
-                ggml_compute_forward_group_norm(params, tensor);
-            } break;
-        case GGML_OP_L2_NORM:
-            {
-                ggml_compute_forward_l2_norm(params, tensor);
-            } break;
-        case GGML_OP_MUL_MAT:
-            {
-                ggml_compute_forward_mul_mat(params, tensor);
-            } break;
-        case GGML_OP_MUL_MAT_ID:
-            {
-                ggml_compute_forward_mul_mat_id(params, tensor);
-            } break;
-        case GGML_OP_OUT_PROD:
-            {
-                ggml_compute_forward_out_prod(params, tensor);
-            } break;
-        case GGML_OP_SCALE:
-            {
-                ggml_compute_forward_scale(params, tensor);
-            } break;
-        case GGML_OP_SET:
-            {
-                ggml_compute_forward_set(params, tensor);
-            } break;
-        case GGML_OP_CPY:
-            {
-                ggml_compute_forward_cpy(params, tensor);
-            } break;
-        case GGML_OP_CONT:
-            {
-                ggml_compute_forward_cont(params, tensor);
-            } break;
-        case GGML_OP_GET_ROWS:
-            {
-                ggml_compute_forward_get_rows(params, tensor);
-            } break;
-        case GGML_OP_GET_ROWS_BACK:
-            {
-                ggml_compute_forward_get_rows_back(params, tensor);
-            } break;
-        case GGML_OP_SET_ROWS:
-            {
-                ggml_compute_forward_set_rows(params, tensor);
-            } break;
-        case GGML_OP_DIAG:
-            {
-                ggml_compute_forward_diag(params, tensor);
-            } break;
-        case GGML_OP_SOFT_MAX:
-            {
-                ggml_compute_forward_soft_max(params, tensor);
-            } break;
-        case GGML_OP_SOFT_MAX_BACK:
-            {
-                ggml_compute_forward_soft_max_ext_back(params, tensor);
-            } break;
-        case GGML_OP_ROPE:
-            {
-                ggml_compute_forward_rope(params, tensor);
-            } break;
-        case GGML_OP_ROPE_BACK:
-            {
-                ggml_compute_forward_rope_back(params, tensor);
-            } break;
-        case GGML_OP_CLAMP:
-            {
-                ggml_compute_forward_clamp(params, tensor);
-            } break;
-        case GGML_OP_CONV_TRANSPOSE_1D:
-            {
-                ggml_compute_forward_conv_transpose_1d(params, tensor);
-            } break;
-        case GGML_OP_IM2COL:
-            {
-                ggml_compute_forward_im2col(params, tensor);
-            } break;
-        case GGML_OP_IM2COL_BACK:
-            {
-                ggml_compute_forward_im2col_back_f32(params, tensor);
-            } break;
-        case GGML_OP_IM2COL_3D:
-            {
-                ggml_compute_forward_im2col_3d(params, tensor);
-            } break;
-        case GGML_OP_COL2IM_1D:
-            {
-                ggml_compute_forward_col2im_1d(params, tensor);
-            } break;
-        case GGML_OP_CONV_2D:
-            {
-                ggml_compute_forward_conv_2d(params, tensor);
-            } break;
-        case GGML_OP_CONV_3D:
-            {
-                ggml_compute_forward_conv_3d(params, tensor);
-            } break;
-        case GGML_OP_CONV_2D_DW:
-            {
-                ggml_compute_forward_conv_2d_dw(params, tensor);
-            } break;
-        case GGML_OP_CONV_TRANSPOSE_2D:
-            {
-                ggml_compute_forward_conv_transpose_2d(params, tensor);
-            } break;
-        case GGML_OP_POOL_1D:
-            {
-                ggml_compute_forward_pool_1d(params, tensor);
-            } break;
-        case GGML_OP_POOL_2D:
-            {
-                ggml_compute_forward_pool_2d(params, tensor);
-            } break;
-        case GGML_OP_POOL_2D_BACK:
-            {
-                ggml_compute_forward_pool_2d_back(params, tensor);
-            } break;
-        case GGML_OP_UPSCALE:
-            {
-                ggml_compute_forward_upscale(params, tensor);
-            } break;
-        case GGML_OP_PAD:
-            {
-                ggml_compute_forward_pad(params, tensor);
-            } break;
-        case GGML_OP_PAD_REFLECT_1D:
-            {
-                ggml_compute_forward_pad_reflect_1d(params, tensor);
-            } break;
-        case GGML_OP_ROLL:
-            {
-                ggml_compute_forward_roll(params, tensor);
-            } break;
-        case GGML_OP_ARANGE:
-            {
-                ggml_compute_forward_arange(params, tensor);
-            } break;
-        case GGML_OP_TIMESTEP_EMBEDDING:
-            {
-                ggml_compute_forward_timestep_embedding(params, tensor);
-            } break;
-        case GGML_OP_ARGSORT:
-            {
-                ggml_compute_forward_argsort(params, tensor);
-            } break;
-        case GGML_OP_TOP_K:
-            {
-                ggml_compute_forward_top_k(params, tensor);
-            } break;
-        case GGML_OP_LEAKY_RELU:
-            {
-                ggml_compute_forward_leaky_relu(params, tensor);
-            } break;
-        case GGML_OP_TRI:
-            {
-                ggml_compute_forward_tri(params, tensor);
-            } break;
-        case GGML_OP_FILL:
-            {
-                ggml_compute_forward_fill(params, tensor);
-            } break;
-        case GGML_OP_FLASH_ATTN_EXT:
-            {
-                ggml_compute_forward_flash_attn_ext(params, tensor);
-            } break;
-        case GGML_OP_FLASH_ATTN_BACK:
-            {
-                int32_t t = ggml_get_op_params_i32(tensor, 0);
-                GGML_ASSERT(t == 0 || t == 1);
-                bool masked = t != 0;
-                ggml_compute_forward_flash_attn_back(params, masked, tensor);
-            } break;
-        case GGML_OP_SSM_CONV:
-            {
-                ggml_compute_forward_ssm_conv(params, tensor);
-            } break;
-        case GGML_OP_SSM_SCAN:
-            {
-                ggml_compute_forward_ssm_scan(params, tensor);
-            } break;
-        case GGML_OP_WIN_PART:
-            {
-                ggml_compute_forward_win_part(params, tensor);
-            } break;
-        case GGML_OP_WIN_UNPART:
-            {
-                ggml_compute_forward_win_unpart(params, tensor);
-            } break;
-        case GGML_OP_UNARY:
-            {
-                ggml_compute_forward_unary(params, tensor);
-            } break;
-        case GGML_OP_GLU:
-            {
-                ggml_compute_forward_glu(params, tensor);
-            } break;
-        case GGML_OP_GET_REL_POS:
-            {
-                ggml_compute_forward_get_rel_pos(params, tensor);
-            } break;
-        case GGML_OP_ADD_REL_POS:
-            {
-                ggml_compute_forward_add_rel_pos(params, tensor);
-            } break;
-        case GGML_OP_RWKV_WKV6:
-            {
-                ggml_compute_forward_rwkv_wkv6(params, tensor);
-            } break;
-        case GGML_OP_GATED_LINEAR_ATTN:
-            {
-                ggml_compute_forward_gla(params, tensor);
-            } break;
-        case GGML_OP_RWKV_WKV7:
-            {
-                ggml_compute_forward_rwkv_wkv7(params, tensor);
-            } break;
-        case GGML_OP_SOLVE_TRI:
-            {
-                ggml_compute_forward_solve_tri(params, tensor);
-            } break;
-        case GGML_OP_GATED_DELTA_NET:
-            {
-                ggml_compute_forward_gated_delta_net(params, tensor);
-            } break;
-        case GGML_OP_LIGHTNING_INDEXER:
-            {
-                ggml_compute_forward_lightning_indexer(params, tensor);
-            } break;
-        case GGML_OP_DSV4_HC_COMB:
-            {
-                ggml_compute_forward_dsv4_hc_comb(params, tensor);
-            } break;
-        case GGML_OP_DSV4_HC_PRE:
-            {
-                ggml_compute_forward_dsv4_hc_pre(params, tensor);
-            } break;
-        case GGML_OP_DSV4_HC_POST:
-            {
-                ggml_compute_forward_dsv4_hc_post(params, tensor);
-            } break;
-        case GGML_OP_TOP_K_MASK:
-            {
-                ggml_compute_forward_top_k_mask(params, tensor);
-            } break;
-        case GGML_OP_MAP_CUSTOM1:
-            {
-                ggml_compute_forward_map_custom1(params, tensor);
-            }
-            break;
-        case GGML_OP_MAP_CUSTOM2:
-            {
-                ggml_compute_forward_map_custom2(params, tensor);
-            }
-            break;
-        case GGML_OP_MAP_CUSTOM3:
-            {
-                ggml_compute_forward_map_custom3(params, tensor);
-            }
-            break;
-        case GGML_OP_CUSTOM:
-            {
-                ggml_compute_forward_custom(params, tensor);
-            }
-            break;
-        case GGML_OP_CROSS_ENTROPY_LOSS:
-            {
-                ggml_compute_forward_cross_entropy_loss(params, tensor);
-            }
-            break;
-        case GGML_OP_CROSS_ENTROPY_LOSS_BACK:
-            {
-                ggml_compute_forward_cross_entropy_loss_back(params, tensor);
-            }
-            break;
-        case GGML_OP_OPT_STEP_ADAMW:
-            {
-                ggml_compute_forward_opt_step_adamw(params, tensor);
-            }
-            break;
-        case GGML_OP_OPT_STEP_SGD:
-            {
-                ggml_compute_forward_opt_step_sgd(params, tensor);
-            }
-            break;
-        case GGML_OP_NONE:
-            {
-                // nop
-            } break;
-        case GGML_OP_RESHAPE:
-            {
-                // nop
-            } break;
-        case GGML_OP_PERMUTE:
-            {
-                // nop
-            } break;
-        case GGML_OP_VIEW:
-            {
-                // nop
-            } break;
-        case GGML_OP_TRANSPOSE:
-            {
-                // nop
-            } break;
-        case GGML_OP_COUNT:
-            {
-                GGML_ABORT("fatal error");
-            }
+    GGML_ASSERT((unsigned) tensor->op < (unsigned) GGML_OP_COUNT);
+
+    if (tensor->op == GGML_OP_FLASH_ATTN_BACK) {
+        int32_t t = ggml_get_op_params_i32(tensor, 0);
+        GGML_ASSERT(t == 0 || t == 1);
+        bool masked = t != 0;
+        ggml_compute_forward_flash_attn_back(params, masked, tensor);
+        return;
     }
+
+    const ggml_compute_forward_fn fn = GGML_COMPUTE_FORWARD[tensor->op];
+    if (fn == NULL) {
+        // a missing row here would silently do nothing, so only the view-like ops
+        // that genuinely have nothing to compute may be NULL
+        GGML_ASSERT(tensor->op == GGML_OP_RESHAPE || tensor->op == GGML_OP_PERMUTE ||
+                    tensor->op == GGML_OP_VIEW    || tensor->op == GGML_OP_TRANSPOSE);
+        return;
+    }
+
+    fn(params, tensor);
 }
 
 // Android's libc implementation "bionic" does not support setting affinity
