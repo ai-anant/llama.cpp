@@ -210,8 +210,8 @@
    "sloc": 3381
   },
   "src/llama-quant.cpp": {
-   "decisions": 415,
-   "sloc": 1209
+   "decisions": 412,
+   "sloc": 1222
   },
   "src/llama-sampler.cpp": {
    "decisions": 379,
@@ -1257,13 +1257,13 @@
   },
   "src/llama-quant.cpp::llama_model_quantize_impl": {
    "decisions": 77,
-   "line": 1030,
+   "line": 1063,
    "sloc": 334
   },
   "src/llama-quant.cpp::llama_tensor_get_type_impl": {
-   "decisions": 175,
-   "line": 521,
-   "sloc": 247
+   "decisions": 83,
+   "line": 681,
+   "sloc": 133
   },
   "src/llama-vocab.cpp::load": {
    "decisions": 276,
@@ -1452,8 +1452,8 @@
   }
  },
  "totals": {
-  "file_decisions": 50297,
+  "file_decisions": 50294,
   "files": 67,
-  "function_decisions": 23721
+  "function_decisions": 23629
  }
 }
