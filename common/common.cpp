@@ -34,6 +34,10 @@
 #include <unordered_set>
 #include <vector>
 
+#if defined(__linux__)
+#include <sched.h>
+#endif
+
 #if defined(__APPLE__) && defined(__MACH__)
 #include <sys/types.h>
 #include <sys/sysctl.h>
@@ -79,7 +83,104 @@ common_time_meas::~common_time_meas() {
 // CPU utils
 //
 
-int32_t common_cpu_get_num_physical_cores() {
+// How many CPUs this process may actually run on, or INT32_MAX if unlimited.
+//
+// NPROCESSORS_ONLN and hardware_concurrency() report the host, not the slice the
+// process was given: inside a container limited to one core they happily report
+// 8, and every thread created past the quota just competes for the same core.
+// Threads cost more than they buy in that situation (measured: one core limited
+// by cgroup, 4 threads gave 4.1 t/s on a 0.5B Q4_K_M model where 1 thread gave
+// 25.6 t/s), so the default thread count is clamped to what the scheduler can
+// actually run.
+static int32_t common_cpu_get_thread_limit() {
+    int32_t limit = INT32_MAX;
+
+#if defined(__linux__)
+    // cpuset / taskset: the scheduler will not run us outside the affinity mask
+    {
+        cpu_set_t mask;
+        if (sched_getaffinity(0, sizeof(mask), &mask) == 0) {
+            const int n = CPU_COUNT(&mask);
+            if (n > 0) {
+                limit = n;
+            }
+        }
+    }
+
+    // cgroup CPU bandwidth: quota / period is how many full cores we may use.
+    // v2 keeps it in cpu.max ("<quota> <period>" or "max <period>"), v1 in
+    // cpu.cfs_quota_us / cpu.cfs_period_us (-1 meaning unlimited).
+    {
+        std::string cg_path_v2;
+        std::string cg_path_v1;
+
+        std::ifstream cgroups("/proc/self/cgroup");
+        std::string line;
+        while (std::getline(cgroups, line)) {
+            const auto first = line.find(':');
+            const auto second = line.find(':', first == std::string::npos ? 0 : first + 1);
+            if (first == std::string::npos || second == std::string::npos) {
+                continue;
+            }
+            const std::string hierarchy = line.substr(first + 1, second - first - 1);
+            const std::string path      = line.substr(second + 1);
+            if (hierarchy.empty()) {
+                cg_path_v2 = path;                       // "0::/path"
+            } else if (hierarchy == "cpu" || hierarchy == "cpu,cpuacct") {
+                cg_path_v1 = path;
+            }
+        }
+
+        double quota  = -1.0;
+        double period = -1.0;
+
+        // v2: /sys/fs/cgroup/<path>/cpu.max, and the mount root itself
+        for (const auto & base : { "/sys/fs/cgroup" + cg_path_v2, std::string("/sys/fs/cgroup") }) {
+            std::ifstream f(base + "/cpu.max");
+            std::string q;
+            if (f >> q >> period && q != "max") {
+                try {
+                    quota = std::stod(q);
+                } catch (const std::exception &) {
+                    quota = -1.0;
+                }
+                break;
+            }
+            if (f.good() || f.eof()) {
+                period = -1.0; // file present but unlimited
+            }
+        }
+
+        // v1 fallback
+        if (quota < 0.0) {
+            for (const auto & base : { "/sys/fs/cgroup/cpu" + cg_path_v1,
+                                       std::string("/sys/fs/cgroup/cpu,cpuacct") + cg_path_v1,
+                                       std::string("/sys/fs/cgroup/cpu") }) {
+                std::ifstream fq(base + "/cpu.cfs_quota_us");
+                std::ifstream fp(base + "/cpu.cfs_period_us");
+                double q = -1.0, p = -1.0;
+                if (fq >> q && fp >> p && q > 0.0 && p > 0.0) {
+                    quota  = q;
+                    period = p;
+                    break;
+                }
+            }
+        }
+
+        if (quota > 0.0 && period > 0.0) {
+            // a fraction of a core still needs one thread
+            const int32_t n = (int32_t) std::ceil(quota / period);
+            if (n > 0) {
+                limit = std::min(limit, n);
+            }
+        }
+    }
+#endif // __linux__
+
+    return limit;
+}
+
+static int32_t common_cpu_get_num_physical_cores_uncapped() {
 #if defined(_AIX)
     int32_t logical_cpus = _system_configuration.ncpus;
     int32_t smt_threads = _system_configuration.smt_threads;
@@ -200,10 +301,14 @@ static int cpu_count_math_cpus(int n_cpu) {
 
 #endif // __x86_64__ && __linux__
 
+int32_t common_cpu_get_num_physical_cores() {
+    return std::min(common_cpu_get_num_physical_cores_uncapped(), common_cpu_get_thread_limit());
+}
+
 /**
  * Returns number of CPUs on system that are useful for math.
  */
-int32_t common_cpu_get_num_math() {
+static int32_t common_cpu_get_num_math_uncapped() {
 #if defined(__x86_64__) && defined(__linux__) && !defined(__ANDROID__)
     int n_cpu = sysconf(_SC_NPROCESSORS_ONLN);
     if (n_cpu < 1) {
@@ -245,7 +350,11 @@ int32_t common_cpu_get_num_math() {
     }
     return phy_cpus * std::min(smt_factor, 2);
 #endif
-    return common_cpu_get_num_physical_cores();
+    return common_cpu_get_num_physical_cores_uncapped();
+}
+
+int32_t common_cpu_get_num_math() {
+    return std::min(common_cpu_get_num_math_uncapped(), common_cpu_get_thread_limit());
 }
 
 // Helper for setting process priority
