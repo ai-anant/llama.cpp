@@ -45,6 +45,26 @@ Nothing here is checked in on "it looks equivalent":
   pair looks ~1% slower purely from drift, which is enough to fake a regression
   in the hottest kernel in the project.
 
+## Performance
+
+Two changes here are actually faster, and both are the same bug: the default
+thread count ignored the CPU budget the process was given.
+
+- `common_cpu_get_thread_limit()` = min(affinity mask, cgroup CPU quota). Defaults
+  use it, so a container limited to one core no longer starts 4-8 threads that the
+  scheduler has to timeshare. Measured on this box (Qwen2.5-0.5B Q4_K_M, defaults
+  on both sides): pp128 12.98 -> 75.14 t/s, tg64 3.93 -> 25.29 t/s, i.e. 5.8x / 6.4x.
+- `llama-quantize` had the same fallback through `hardware_concurrency()`:
+  24.00 s -> 4.37 s for a 400 MB requantize, byte-identical output.
+
+Everything else on this branch is structure, not speed. Measured on the same
+model at 1 thread: the per-token graph build is 0.17 ms against 87 ms of compute
+(0.2%), and 25 t/s corresponds to roughly 25 GFLOPS, which is about 80% of the
+single-core AVX2 peak of the CPU in question - the kernels are not leaving much
+on the table either. Config defaults are already optimal here (`-fa auto` beats
+`-fa off` by 5-6%; `-ub` 64/128/256/512 and `-b` 256/512 are all within noise or
+worse). Further gains need kernel work with a profiler on real hardware.
+
 ## The ratchet
 
 ```
