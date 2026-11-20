@@ -2005,272 +2005,199 @@ static void set_numa_thread_affinity(int thread_n) { UNUSED(thread_n);  }
 static void clear_numa_thread_affinity(void) {}
 #endif
 
-static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
-    int n_tasks = 0;
+// How many threads an op gets. Most ops are a fixed answer, which is the table
+// below; the ones that depend on the node itself are handled explicitly, because
+// a table cannot express "min(n_threads, number of heads)".
+enum ggml_task_policy {
+    GGML_TASK_POLICY_ONE  = 0, // single-threaded
+    GGML_TASK_POLICY_ALL  = 1, // every available thread
+    GGML_TASK_POLICY_NODE = 2, // decided from the node in ggml_get_n_tasks()
+};
 
+static const uint8_t GGML_TASK_POLICY_OP[GGML_OP_COUNT] = {
+    [GGML_OP_DUP]                   = GGML_TASK_POLICY_ALL,
+    [GGML_OP_ADD]                   = GGML_TASK_POLICY_ALL,
+    [GGML_OP_ADD_ID]                = GGML_TASK_POLICY_ALL,
+    [GGML_OP_ACC]                   = GGML_TASK_POLICY_ALL,
+    [GGML_OP_MUL]                   = GGML_TASK_POLICY_ALL,
+    [GGML_OP_DIV]                   = GGML_TASK_POLICY_ALL,
+    [GGML_OP_CUMSUM]                = GGML_TASK_POLICY_ALL,
+    [GGML_OP_COUNT_EQUAL]           = GGML_TASK_POLICY_ALL,
+    [GGML_OP_CONCAT]                = GGML_TASK_POLICY_ALL,
+    [GGML_OP_SILU_BACK]             = GGML_TASK_POLICY_ALL,
+    [GGML_OP_NORM]                  = GGML_TASK_POLICY_ALL,
+    [GGML_OP_RMS_NORM]              = GGML_TASK_POLICY_ALL,
+    [GGML_OP_RMS_NORM_BACK]         = GGML_TASK_POLICY_ALL,
+    [GGML_OP_GROUP_NORM]            = GGML_TASK_POLICY_ALL,
+    [GGML_OP_L2_NORM]               = GGML_TASK_POLICY_ALL,
+    [GGML_OP_MUL_MAT]               = GGML_TASK_POLICY_ALL,
+    [GGML_OP_MUL_MAT_ID]            = GGML_TASK_POLICY_ALL,
+    [GGML_OP_OUT_PROD]              = GGML_TASK_POLICY_ALL,
+    [GGML_OP_CPY]                   = GGML_TASK_POLICY_ALL,
+    [GGML_OP_CONT]                  = GGML_TASK_POLICY_ALL,
+    [GGML_OP_GET_ROWS]              = GGML_TASK_POLICY_NODE,
+    [GGML_OP_SET_ROWS]              = GGML_TASK_POLICY_ALL,
+    [GGML_OP_SOFT_MAX]              = GGML_TASK_POLICY_NODE,
+    [GGML_OP_SOFT_MAX_BACK]         = GGML_TASK_POLICY_ALL,
+    [GGML_OP_ROPE]                  = GGML_TASK_POLICY_ALL,
+    [GGML_OP_ROPE_BACK]             = GGML_TASK_POLICY_ALL,
+    [GGML_OP_CONV_TRANSPOSE_1D]     = GGML_TASK_POLICY_ALL,
+    [GGML_OP_IM2COL]                = GGML_TASK_POLICY_ALL,
+    [GGML_OP_IM2COL_BACK]           = GGML_TASK_POLICY_ALL,
+    [GGML_OP_IM2COL_3D]             = GGML_TASK_POLICY_ALL,
+    [GGML_OP_COL2IM_1D]             = GGML_TASK_POLICY_ALL,
+    [GGML_OP_CONV_2D]               = GGML_TASK_POLICY_ALL,
+    [GGML_OP_CONV_3D]               = GGML_TASK_POLICY_ALL,
+    [GGML_OP_CONV_2D_DW]            = GGML_TASK_POLICY_ALL,
+    [GGML_OP_CONV_TRANSPOSE_2D]     = GGML_TASK_POLICY_ALL,
+    [GGML_OP_UPSCALE]               = GGML_TASK_POLICY_ALL,
+    [GGML_OP_PAD]                   = GGML_TASK_POLICY_ALL,
+    [GGML_OP_PAD_REFLECT_1D]        = GGML_TASK_POLICY_ALL,
+    [GGML_OP_ROLL]                  = GGML_TASK_POLICY_ALL,
+    [GGML_OP_ARANGE]                = GGML_TASK_POLICY_ALL,
+    [GGML_OP_TIMESTEP_EMBEDDING]    = GGML_TASK_POLICY_ALL,
+    [GGML_OP_ARGSORT]               = GGML_TASK_POLICY_ALL,
+    [GGML_OP_TOP_K]                 = GGML_TASK_POLICY_ALL,
+    [GGML_OP_TRI]                   = GGML_TASK_POLICY_ALL,
+    [GGML_OP_FILL]                  = GGML_TASK_POLICY_ALL,
+    [GGML_OP_FLASH_ATTN_EXT]        = GGML_TASK_POLICY_ALL,
+    [GGML_OP_FLASH_ATTN_BACK]       = GGML_TASK_POLICY_ALL,
+    [GGML_OP_SSM_CONV]              = GGML_TASK_POLICY_ALL,
+    [GGML_OP_SSM_SCAN]              = GGML_TASK_POLICY_ALL,
+    [GGML_OP_ADD_REL_POS]           = GGML_TASK_POLICY_ALL,
+    [GGML_OP_RWKV_WKV6]             = GGML_TASK_POLICY_NODE,
+    [GGML_OP_GATED_LINEAR_ATTN]     = GGML_TASK_POLICY_NODE,
+    [GGML_OP_RWKV_WKV7]             = GGML_TASK_POLICY_NODE,
+    [GGML_OP_SOLVE_TRI]             = GGML_TASK_POLICY_ALL,
+    [GGML_OP_GATED_DELTA_NET]       = GGML_TASK_POLICY_ALL,
+    [GGML_OP_LIGHTNING_INDEXER]     = GGML_TASK_POLICY_ALL,
+    [GGML_OP_DSV4_HC_COMB]          = GGML_TASK_POLICY_ALL,
+    [GGML_OP_DSV4_HC_PRE]           = GGML_TASK_POLICY_ALL,
+    [GGML_OP_DSV4_HC_POST]          = GGML_TASK_POLICY_ALL,
+    [GGML_OP_TOP_K_MASK]            = GGML_TASK_POLICY_ALL,
+    [GGML_OP_UNARY]                 = GGML_TASK_POLICY_NODE,
+    [GGML_OP_MAP_CUSTOM1]           = GGML_TASK_POLICY_NODE,
+    [GGML_OP_MAP_CUSTOM2]           = GGML_TASK_POLICY_NODE,
+    [GGML_OP_MAP_CUSTOM3]           = GGML_TASK_POLICY_NODE,
+    [GGML_OP_CUSTOM]                = GGML_TASK_POLICY_NODE,
+    [GGML_OP_CROSS_ENTROPY_LOSS]    = GGML_TASK_POLICY_ALL,
+    [GGML_OP_CROSS_ENTROPY_LOSS_BACK]= GGML_TASK_POLICY_ALL,
+    [GGML_OP_OPT_STEP_ADAMW]        = GGML_TASK_POLICY_ALL,
+    [GGML_OP_OPT_STEP_SGD]          = GGML_TASK_POLICY_ALL,
+    [GGML_OP_GLU]                   = GGML_TASK_POLICY_NODE,
+};
+
+static int ggml_unary_n_tasks(struct ggml_tensor * node, int n_threads) {
+    switch (ggml_get_unary_op(node)) {
+        case GGML_UNARY_OP_GELU:
+        case GGML_UNARY_OP_GELU_ERF:
+        case GGML_UNARY_OP_GELU_QUICK:
+        case GGML_UNARY_OP_SILU:
+        case GGML_UNARY_OP_XIELU:
+            return n_threads;
+
+        case GGML_UNARY_OP_ABS:
+        case GGML_UNARY_OP_SGN:
+        case GGML_UNARY_OP_NEG:
+        case GGML_UNARY_OP_STEP:
+        case GGML_UNARY_OP_TANH:
+        case GGML_UNARY_OP_ELU:
+        case GGML_UNARY_OP_RELU:
+        case GGML_UNARY_OP_SIGMOID:
+        case GGML_UNARY_OP_HARDSWISH:
+        case GGML_UNARY_OP_HARDSIGMOID:
+        case GGML_UNARY_OP_EXP:
+        case GGML_UNARY_OP_SOFTPLUS:
+        case GGML_UNARY_OP_EXPM1:
+        case GGML_UNARY_OP_FLOOR:
+        case GGML_UNARY_OP_CEIL:
+        case GGML_UNARY_OP_ROUND:
+        case GGML_UNARY_OP_TRUNC:
+            return 1;
+
+        default:
+            GGML_ABORT("fatal error");
+    }
+}
+
+static int ggml_glu_n_tasks(struct ggml_tensor * node, int n_threads) {
+    switch (ggml_get_glu_op(node)) {
+        case GGML_GLU_OP_REGLU:
+        case GGML_GLU_OP_GEGLU:
+        case GGML_GLU_OP_SWIGLU:
+        case GGML_GLU_OP_SWIGLU_OAI:
+        case GGML_GLU_OP_GEGLU_ERF:
+        case GGML_GLU_OP_GEGLU_QUICK:
+        case GGML_GLU_OP_SWIGLU_CLAMP:
+            return n_threads;
+
+        default:
+            GGML_ABORT("fatal error");
+    }
+}
+
+static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
     if (ggml_is_empty(node)) {
-        // no need to multi-thread a no-op
-        n_tasks = 1;
-        return n_tasks;
+        return 1; // no need to multi-thread a no-op
     }
 
+    // the answer depends on the node, not just on the op
     switch (node->op) {
-        case GGML_OP_CPY:
-        case GGML_OP_DUP:
-        case GGML_OP_CONT:
-        case GGML_OP_ADD:
-        case GGML_OP_ADD_ID:
-        case GGML_OP_ACC:
-        case GGML_OP_CUMSUM:
-        case GGML_OP_TRI:
-        case GGML_OP_FILL:
-            {
-                n_tasks = n_threads;
-            } break;
-        case GGML_OP_SUB:
-        case GGML_OP_SQR:
-        case GGML_OP_SQRT:
-        case GGML_OP_LOG:
-        case GGML_OP_SIN:
-        case GGML_OP_COS:
-        case GGML_OP_SUM:
-        case GGML_OP_SUM_ROWS:
-        case GGML_OP_MEAN:
-        case GGML_OP_ARGMAX:
-            {
-                n_tasks = 1;
-            } break;
-        case GGML_OP_COUNT_EQUAL:
-        case GGML_OP_SOLVE_TRI:
-        case GGML_OP_GATED_DELTA_NET:
-        case GGML_OP_DSV4_HC_COMB:
-        case GGML_OP_DSV4_HC_PRE:
-        case GGML_OP_DSV4_HC_POST:
-        case GGML_OP_TOP_K_MASK:
-            {
-                n_tasks = n_threads;
-            } break;
-        case GGML_OP_REPEAT:
-        case GGML_OP_REPEAT_BACK:
-        case GGML_OP_LEAKY_RELU:
-            {
-                n_tasks = 1;
-            } break;
-        case GGML_OP_UNARY:
-            switch (ggml_get_unary_op(node)) {
-                case GGML_UNARY_OP_ABS:
-                case GGML_UNARY_OP_SGN:
-                case GGML_UNARY_OP_NEG:
-                case GGML_UNARY_OP_STEP:
-                case GGML_UNARY_OP_TANH:
-                case GGML_UNARY_OP_ELU:
-                case GGML_UNARY_OP_RELU:
-                case GGML_UNARY_OP_SIGMOID:
-                case GGML_UNARY_OP_HARDSWISH:
-                case GGML_UNARY_OP_HARDSIGMOID:
-                case GGML_UNARY_OP_EXP:
-                case GGML_UNARY_OP_SOFTPLUS:
-                case GGML_UNARY_OP_EXPM1:
-                case GGML_UNARY_OP_FLOOR:
-                case GGML_UNARY_OP_CEIL:
-                case GGML_UNARY_OP_ROUND:
-                case GGML_UNARY_OP_TRUNC:
-                    {
-                        n_tasks = 1;
-                    } break;
-
-                case GGML_UNARY_OP_GELU:
-                case GGML_UNARY_OP_GELU_ERF:
-                case GGML_UNARY_OP_GELU_QUICK:
-                case GGML_UNARY_OP_SILU:
-                case GGML_UNARY_OP_XIELU:
-                    {
-                        n_tasks = n_threads;
-                    } break;
-                default:
-                    GGML_ABORT("fatal error");
-            }
-            break;
-        case GGML_OP_GLU:
-            switch (ggml_get_glu_op(node)) {
-                case GGML_GLU_OP_REGLU:
-                case GGML_GLU_OP_GEGLU:
-                case GGML_GLU_OP_SWIGLU:
-                case GGML_GLU_OP_SWIGLU_OAI:
-                case GGML_GLU_OP_GEGLU_ERF:
-                case GGML_GLU_OP_GEGLU_QUICK:
-                case GGML_GLU_OP_SWIGLU_CLAMP:
-                    {
-                        n_tasks = n_threads;
-                    } break;
-                default:
-                    GGML_ABORT("fatal error");
-            }
-            break;
-        case GGML_OP_SILU_BACK:
-        case GGML_OP_MUL:
-        case GGML_OP_DIV:
-        case GGML_OP_NORM:
-        case GGML_OP_RMS_NORM:
-        case GGML_OP_RMS_NORM_BACK:
-        case GGML_OP_L2_NORM:
-        case GGML_OP_GROUP_NORM:
-        case GGML_OP_CONCAT:
-        case GGML_OP_MUL_MAT:
-        case GGML_OP_MUL_MAT_ID:
-        case GGML_OP_OUT_PROD:
-        case GGML_OP_SET_ROWS:
-            {
-                n_tasks = n_threads;
-            } break;
         case GGML_OP_GET_ROWS:
-            {
-                // waking the other threads costs more than a small lookup, e.g. when this is the only CPU node of an offloaded model
-                n_tasks = ggml_nelements(node) >= 262144 ? n_threads : 1;
-            } break;
-        case GGML_OP_SCALE:
-        case GGML_OP_SET:
-        case GGML_OP_RESHAPE:
-        case GGML_OP_VIEW:
-        case GGML_OP_PERMUTE:
-        case GGML_OP_TRANSPOSE:
-        case GGML_OP_GET_ROWS_BACK:
-        case GGML_OP_DIAG:
-            {
-                n_tasks = 1;
-            } break;
-        case GGML_OP_SOFT_MAX_BACK:
-        case GGML_OP_ROPE:
-        case GGML_OP_ROPE_BACK:
-        case GGML_OP_ADD_REL_POS:
-            {
-                n_tasks = n_threads;
-            } break;
-        case GGML_OP_CLAMP:
-            {
-                n_tasks = 1; //TODO
-            } break;
+            // waking the other threads costs more than a small lookup, e.g. when this is the only CPU node of an offloaded model
+            return ggml_nelements(node) >= 262144 ? n_threads : 1;
         case GGML_OP_SOFT_MAX:
-            {
-                n_tasks = MIN(n_threads, ggml_nrows(node->src[0]));
-            } break;
-        case GGML_OP_IM2COL:
-        case GGML_OP_IM2COL_BACK:
-        case GGML_OP_IM2COL_3D:
-        case GGML_OP_CONV_2D:
-        case GGML_OP_CONV_3D:
-        case GGML_OP_CONV_2D_DW:
-        case GGML_OP_COL2IM_1D:
-        case GGML_OP_CONV_TRANSPOSE_1D:
-        case GGML_OP_CONV_TRANSPOSE_2D:
-            {
-                n_tasks = n_threads;
-            } break;
-        case GGML_OP_POOL_1D:
-        case GGML_OP_POOL_2D:
-        case GGML_OP_POOL_2D_BACK:
-            {
-                n_tasks = 1;
-            } break;
-        case GGML_OP_UPSCALE:
-        case GGML_OP_PAD:
-        case GGML_OP_PAD_REFLECT_1D:
-        case GGML_OP_ROLL:
-        case GGML_OP_ARANGE:
-        case GGML_OP_TIMESTEP_EMBEDDING:
-        case GGML_OP_ARGSORT:
-        case GGML_OP_TOP_K:
-        case GGML_OP_FLASH_ATTN_EXT:
-        case GGML_OP_FLASH_ATTN_BACK:
-        case GGML_OP_SSM_CONV:
-        case GGML_OP_SSM_SCAN:
-        case GGML_OP_LIGHTNING_INDEXER:
-            {
-                n_tasks = n_threads;
-            } break;
+            return MIN(n_threads, ggml_nrows(node->src[0]));
         case GGML_OP_RWKV_WKV6:
         case GGML_OP_GATED_LINEAR_ATTN:
         case GGML_OP_RWKV_WKV7:
-            {
-                const int64_t n_heads = node->src[1]->ne[1];
-                n_tasks = MIN(n_threads, n_heads);
-            } break;
-        case GGML_OP_WIN_PART:
-        case GGML_OP_WIN_UNPART:
-        case GGML_OP_GET_REL_POS:
-            {
-                n_tasks = 1;
-            } break;
-        case GGML_OP_MAP_CUSTOM1:
-            {
-                struct ggml_map_custom1_op_params p;
-                memcpy(&p, node->op_params, sizeof(p));
-                if (p.n_tasks == GGML_N_TASKS_MAX) {
-                    n_tasks = n_threads;
-                } else {
-                    n_tasks = MIN(p.n_tasks, n_threads);
-                }
-            } break;
-        case GGML_OP_MAP_CUSTOM2:
-            {
-                struct ggml_map_custom2_op_params p;
-                memcpy(&p, node->op_params, sizeof(p));
-                if (p.n_tasks == GGML_N_TASKS_MAX) {
-                    n_tasks = n_threads;
-                } else {
-                    n_tasks = MIN(p.n_tasks, n_threads);
-                }
-            } break;
-        case GGML_OP_MAP_CUSTOM3:
-            {
-                struct ggml_map_custom3_op_params p;
-                memcpy(&p, node->op_params, sizeof(p));
-                if (p.n_tasks == GGML_N_TASKS_MAX) {
-                    n_tasks = n_threads;
-                } else {
-                    n_tasks = MIN(p.n_tasks, n_threads);
-                }
-            } break;
-        case GGML_OP_CUSTOM:
-            {
-                struct ggml_custom_op_params p;
-                memcpy(&p, node->op_params, sizeof(p));
-                if (p.n_tasks == GGML_N_TASKS_MAX) {
-                    n_tasks = n_threads;
-                } else {
-                    n_tasks = MIN(p.n_tasks, n_threads);
-                }
-            } break;
-        case GGML_OP_CROSS_ENTROPY_LOSS:
-        case GGML_OP_CROSS_ENTROPY_LOSS_BACK:
-        case GGML_OP_OPT_STEP_ADAMW:
-        case GGML_OP_OPT_STEP_SGD:
-            {
-                n_tasks = n_threads;
-            } break;
-        case GGML_OP_NONE:
-            {
-                n_tasks = 1;
-            } break;
+            return MIN(n_threads, node->src[1]->ne[1]);
+        case GGML_OP_MAP_CUSTOM1: {
+            struct ggml_map_custom1_op_params p;
+            memcpy(&p, node->op_params, sizeof(p));
+            return p.n_tasks == GGML_N_TASKS_MAX ? n_threads : MIN(p.n_tasks, n_threads);
+        }
+        case GGML_OP_MAP_CUSTOM2: {
+            struct ggml_map_custom2_op_params p;
+            memcpy(&p, node->op_params, sizeof(p));
+            return p.n_tasks == GGML_N_TASKS_MAX ? n_threads : MIN(p.n_tasks, n_threads);
+        }
+        case GGML_OP_MAP_CUSTOM3: {
+            struct ggml_map_custom3_op_params p;
+            memcpy(&p, node->op_params, sizeof(p));
+            return p.n_tasks == GGML_N_TASKS_MAX ? n_threads : MIN(p.n_tasks, n_threads);
+        }
+        case GGML_OP_CUSTOM: {
+            struct ggml_custom_op_params p;
+            memcpy(&p, node->op_params, sizeof(p));
+            return p.n_tasks == GGML_N_TASKS_MAX ? n_threads : MIN(p.n_tasks, n_threads);
+        }
+        case GGML_OP_UNARY:
+            return ggml_unary_n_tasks(node, n_threads);
+        case GGML_OP_GLU:
+            return ggml_glu_n_tasks(node, n_threads);
+
         case GGML_OP_COUNT:
-            {
-                GGML_ABORT("fatal error");
-            }
+            GGML_ABORT("fatal error");
+
         default:
-            {
-                fprintf(stderr, "%s: op not implemented: ", __func__);
-                if (node->op < GGML_OP_COUNT) {
-                    fprintf(stderr, "%s\n", ggml_op_name(node->op));
-                } else {
-                    fprintf(stderr, "%d\n", node->op);
-                }
-                GGML_ABORT("fatal error");
-            }
+            break;
     }
 
-    assert(n_tasks > 0);
+    if ((unsigned) node->op >= (unsigned) GGML_OP_COUNT) {
+        fprintf(stderr, "%s: op not implemented: %d\n", __func__, (int) node->op);
+        GGML_ABORT("fatal error");
+    }
 
-    return n_tasks;
+    switch (GGML_TASK_POLICY_OP[node->op]) {
+        case GGML_TASK_POLICY_ALL:  return n_threads;
+        case GGML_TASK_POLICY_ONE:  return 1;
+        case GGML_TASK_POLICY_NODE: break; // an op that lost its custom handling
+    }
+
+    fprintf(stderr, "%s: op not implemented: ", __func__);
+    fprintf(stderr, "%s\n", ggml_op_name(node->op));
+    GGML_ABORT("fatal error");
 }
 
 static thread_ret_t ggml_graph_compute_secondary_thread(void* data);
