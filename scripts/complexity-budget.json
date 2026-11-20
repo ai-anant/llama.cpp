@@ -42,8 +42,8 @@
    "sloc": 3382
   },
   "ggml/src/ggml-cpu/ggml-cpu.c": {
-   "decisions": 643,
-   "sloc": 2590
+   "decisions": 638,
+   "sloc": 2616
   },
   "ggml/src/ggml-cpu/kleidiai/kleidiai.cpp": {
    "decisions": 452,
@@ -410,19 +410,14 @@
    "line": 641,
    "sloc": 551
   },
-  "ggml/src/ggml-cpu/ggml-cpu.c::ggml_compute_forward_mul_mat": {
-   "decisions": 42,
-   "line": 1264,
-   "sloc": 151
-  },
   "ggml/src/ggml-cpu/ggml-cpu.c::ggml_get_n_tasks": {
    "decisions": 139,
-   "line": 1969,
+   "line": 2008,
    "sloc": 260
   },
   "ggml/src/ggml-cpu/ggml-cpu.c::ggml_graph_plan": {
    "decisions": 67,
-   "line": 2527,
+   "line": 2566,
    "sloc": 204
   },
   "ggml/src/ggml-cpu/ggml-cpu.cpp::ggml_backend_cpu_device_supports_op": {
@@ -1447,8 +1442,8 @@
   }
  },
  "totals": {
-  "file_decisions": 50198,
+  "file_decisions": 50193,
   "files": 67,
-  "function_decisions": 23524
+  "function_decisions": 23482
  }
 }

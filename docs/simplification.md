@@ -40,7 +40,10 @@ Nothing here is checked in on "it looks equivalent":
   pre-refactor binary for two ftypes: `Q4_K_M` and `IQ3_XS`. Both binaries are
   deterministic run to run, so the hashes are meaningful.
 - `llama-bench` with `llama-bench -m <model> -p 512 -n 128 -t 1` before and after,
-  against an upstream worktree build, to prove no throughput regression.
+  against an upstream worktree build, to prove no throughput regression. Always
+  run the A/B **both ways round**: on a busy machine the second binary of each
+  pair looks ~1% slower purely from drift, which is enough to fake a regression
+  in the hottest kernel in the project.
 
 ## The ratchet
 
