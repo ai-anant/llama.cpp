@@ -634,6 +634,12 @@ int llama_quantize(int argc, char ** argv) {
         fprintf(stderr, "%s: quantizing '%s' to '%s' as %s", __func__, fname_inp.c_str(), fname_out.c_str(), ftype_str.c_str());
     }
 
+    if (params.nthread <= 0) {
+        // the library would fall back to hardware_concurrency(), which reports the
+        // host instead of the container's CPU quota - see common_cpu_get_num_math()
+        params.nthread = common_cpu_get_num_math();
+    }
+
     if (params.nthread > 0) {
         fprintf(stderr, " using %d threads", params.nthread);
     }
