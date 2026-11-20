@@ -2909,161 +2909,112 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
         // TODO: convert scripts should provide these tokens through the KV metadata LLM_KV_TOKENIZER_...
         //       for now, we apply this workaround to find the tokens based on their text
 
+        static const char * const NAMES_EOT[] = {
+            "<|eot_id|>",
+            "<|im_end|>",
+            "<|end|>",
+            "<end_of_turn>",
+            "<|endoftext|>",
+            "<|end_of_text|>",
+            "<EOT>",
+            "_<EOT>",
+            "[EOT]",
+            "<｜end▁of▁sentence｜>",
+            "<end_of_utterance>",
+        };
+        static const char * const NAMES_EOM[] = {
+            "<|eom_id|>",
+        };
+        static const char * const NAMES_FIM_PRE[] = {
+            "<|fim_prefix|>",
+            "<fim-prefix>",
+            "<fim_prefix>",
+            "<｜fim▁begin｜>",
+            "<PRE>",
+            "▁<PRE>",
+            "<|code_prefix|>",
+            "<|prefix|>",
+            "<|plamo:fim_prefix|>",
+        };
+        static const char * const NAMES_FIM_SUF[] = {
+            "<|fim_suffix|>",
+            "<fim-suffix>",
+            "<fim_suffix>",
+            "<｜fim▁hole｜>",
+            "<SUF>",
+            "▁<SUF>",
+            "<|code_suffix|>",
+            "<|suffix|>",
+            "<|plamo:fim_suffix|>",
+        };
+        static const char * const NAMES_FIM_MID[] = {
+            "<|fim_middle|>",
+            "<fim-middle>",
+            "<fim_middle>",
+            "<｜fim▁end｜>",
+            "<MID>",
+            "▁<MID>",
+            "<|code_middle|>",
+            "<|middle|>",
+            "<|plamo:fim_middle|>",
+        };
+        static const char * const NAMES_FIM_PAD[] = {
+            "<|fim_pad|>",
+            "<fim-pad>",
+            "<fim_pad>",
+            "<PAD>",
+            "[PAD]",
+        };
+        static const char * const NAMES_FIM_REP[] = {
+            "<|fim_repo|>",
+            "<|repo_name|>",
+            "<fim-repo>",
+            "<REPO>",
+            "<reponame>",
+        };
+        static const char * const NAMES_FIM_SEP[] = {
+            "<|file_sep|>",
+            "<|plamo:file_separator|>",
+        };
+
+        // Convert scripts do not always write the special token ids into the GGUF,
+        // so fall back to their text. The first token whose text matches wins and is
+        // forced to control-type: a model that does not mark them is buggy.
+        const struct special_token_by_text {
+            llama_token * slot;
+            const char * const * names;
+            size_t n_names;
+        } SPECIALS[] = {
+            { &special_eot_id,                     NAMES_EOT, sizeof(NAMES_EOT)/sizeof(NAMES_EOT[0]) },
+            { &special_eom_id,                     NAMES_EOM, sizeof(NAMES_EOM)/sizeof(NAMES_EOM[0]) },
+            { &special_fim_pre_id,                 NAMES_FIM_PRE, sizeof(NAMES_FIM_PRE)/sizeof(NAMES_FIM_PRE[0]) },
+            { &special_fim_suf_id,                 NAMES_FIM_SUF, sizeof(NAMES_FIM_SUF)/sizeof(NAMES_FIM_SUF[0]) },
+            { &special_fim_mid_id,                 NAMES_FIM_MID, sizeof(NAMES_FIM_MID)/sizeof(NAMES_FIM_MID[0]) },
+            { &special_fim_pad_id,                 NAMES_FIM_PAD, sizeof(NAMES_FIM_PAD)/sizeof(NAMES_FIM_PAD[0]) },
+            { &special_fim_rep_id,                 NAMES_FIM_REP, sizeof(NAMES_FIM_REP)/sizeof(NAMES_FIM_REP[0]) },
+            { &special_fim_sep_id,                 NAMES_FIM_SEP, sizeof(NAMES_FIM_SEP)/sizeof(NAMES_FIM_SEP[0]) },
+        };
+
         for (const auto & t : token_to_id) {
             auto & attr = id_to_token[t.second].attr;
 
-            // find EOT token: "<|eot_id|>", "<|im_end|>", "<end_of_turn>", etc.
-            if (special_eot_id == LLAMA_TOKEN_NULL) {
-                if (false
-                        || t.first == "<|eot_id|>"
-                        || t.first == "<|im_end|>"
-                        || t.first == "<|end|>"
-                        || t.first == "<end_of_turn>"
-                        || t.first == "<|endoftext|>"
-                        || t.first == "<|end_of_text|>" // granite
-                        || t.first == "<EOT>"
-                        || t.first == "_<EOT>"
-                        || t.first == "[EOT]" // Kimi-K2
-                        || t.first == "<｜end▁of▁sentence｜>" // DeepSeek
-                        || t.first == "<end_of_utterance>" // smoldocling
-                   ) {
-                    special_eot_id = t.second;
-                    if ((attr & LLAMA_TOKEN_ATTR_CONTROL) == 0) {
-                        LLAMA_LOG_WARN("%s: control-looking token: %6d '%s' was not control-type; this is probably a bug in the model. its type will be overridden\n",
-                                __func__, t.second, t.first.c_str());
-                        attr = (llama_token_attr) (attr | LLAMA_TOKEN_ATTR_CONTROL);
-                    }
+            for (const auto & special : SPECIALS) {
+                if (*special.slot != LLAMA_TOKEN_NULL) {
+                    continue;
                 }
-            }
 
-            // find EOM token: "<|eom_id|>"
-            if (special_eom_id == LLAMA_TOKEN_NULL) {
-                if (false
-                        || t.first == "<|eom_id|>"
-                        ) {
-                    special_eom_id = t.second;
+                for (size_t i = 0; i < special.n_names; ++i) {
+                    if (t.first != special.names[i]) {
+                        continue;
+                    }
+
+                    *special.slot = t.second;
                     if ((attr & LLAMA_TOKEN_ATTR_CONTROL) == 0) {
                         LLAMA_LOG_WARN("%s: control-looking token: %6d '%s' was not control-type; this is probably a bug in the model. its type will be overridden\n",
                                 __func__, t.second, t.first.c_str());
                         attr = (llama_token_attr) (attr | LLAMA_TOKEN_ATTR_CONTROL);
                     }
-                }
-            }
-
-            // find FIM_PRE token: "<|fim_prefix|>", "<fim-prefix>", "<PRE>", etc.
-            if (special_fim_pre_id == LLAMA_TOKEN_NULL) {
-                if (false
-                        || t.first == "<|fim_prefix|>"  // Qwen
-                        || t.first == "<fim-prefix>"
-                        || t.first == "<fim_prefix>"    // Granite
-                        || t.first == "<｜fim▁begin｜>" // DeepSeek
-                        || t.first == "<PRE>"
-                        || t.first == "▁<PRE>"          // CodeLlama
-                        || t.first == "<|code_prefix|>" // GLM-4.5
-                        || t.first == "<|prefix|>"      // Falcon-H1-Tiny-Coder
-                        || t.first == "<|plamo:fim_prefix|>" // PLaMo-3
-                        ) {
-                    special_fim_pre_id = t.second;
-                    if ((attr & LLAMA_TOKEN_ATTR_CONTROL) == 0) {
-                        LLAMA_LOG_WARN("%s: control-looking token: %6d '%s' was not control-type; this is probably a bug in the model. its type will be overridden\n",
-                                __func__, t.second, t.first.c_str());
-                        attr = (llama_token_attr) (attr | LLAMA_TOKEN_ATTR_CONTROL);
-                    }
-                }
-            }
-
-            // find FIM_SUF token: "<|fim_suffix|>", "<fim-suffix>", "<SUF>", etc.
-            if (special_fim_suf_id == LLAMA_TOKEN_NULL) {
-                if (false
-                        || t.first == "<|fim_suffix|>" // Qwen
-                        || t.first == "<fim-suffix>"
-                        || t.first == "<fim_suffix>"   // Granite
-                        || t.first == "<｜fim▁hole｜>" // DeepSeek
-                        || t.first == "<SUF>"
-                        || t.first == "▁<SUF>"         // CodeLlama
-                        || t.first == "<|code_suffix|>" // GLM-4.5
-                        || t.first == "<|suffix|>"      // Falcon-H1-Tiny-Coder
-                        || t.first == "<|plamo:fim_suffix|>" // PLaMo-3
-                        ) {
-                    special_fim_suf_id = t.second;
-                    if ((attr & LLAMA_TOKEN_ATTR_CONTROL) == 0) {
-                        LLAMA_LOG_WARN("%s: control-looking token: %6d '%s' was not control-type; this is probably a bug in the model. its type will be overridden\n",
-                                __func__, t.second, t.first.c_str());
-                        attr = (llama_token_attr) (attr | LLAMA_TOKEN_ATTR_CONTROL);
-                    }
-                }
-            }
-
-            // find FIM_MID token: "<|fim_middle|>", "<fim-middle>", "<MID>", etc.
-            if (special_fim_mid_id == LLAMA_TOKEN_NULL) {
-                if (false
-                        || t.first == "<|fim_middle|>" // Qwen
-                        || t.first == "<fim-middle>"
-                        || t.first == "<fim_middle>"   // Granite
-                        || t.first == "<｜fim▁end｜>"  // DeepSeek
-                        || t.first == "<MID>"
-                        || t.first == "▁<MID>"         // CodeLlama
-                        || t.first == "<|code_middle|>" // GLM-4.5
-                        || t.first == "<|middle|>"      // Falcon-H1-Tiny-Coder
-                        || t.first == "<|plamo:fim_middle|>" // PLaMo-3
-                        ) {
-                    special_fim_mid_id = t.second;
-                    if ((attr & LLAMA_TOKEN_ATTR_CONTROL) == 0) {
-                        LLAMA_LOG_WARN("%s: control-looking token: %6d '%s' was not control-type; this is probably a bug in the model. its type will be overridden\n",
-                                __func__, t.second, t.first.c_str());
-                        attr = (llama_token_attr) (attr | LLAMA_TOKEN_ATTR_CONTROL);
-                    }
-                }
-            }
-
-            // find FIM_PAD token: "<|fim_pad|>", "<fim-pad>", "<PAD>", etc.
-            if (special_fim_pad_id == LLAMA_TOKEN_NULL) {
-                if (false
-                        || t.first == "<|fim_pad|>" // Qwen
-                        || t.first == "<fim-pad>"
-                        || t.first == "<fim_pad>"   // Granite
-                        || t.first == "<PAD>"
-                        || t.first == "[PAD]" // Kimi-K2
-                        ) {
-                    special_fim_pad_id = t.second;
-                    if ((attr & LLAMA_TOKEN_ATTR_CONTROL) == 0) {
-                        LLAMA_LOG_WARN("%s: control-looking token: %6d '%s' was not control-type; this is probably a bug in the model. its type will be overridden\n",
-                                __func__, t.second, t.first.c_str());
-                        attr = (llama_token_attr) (attr | LLAMA_TOKEN_ATTR_CONTROL);
-                    }
-                }
-            }
-
-            // find FIM_REP token: "<|fim_repo|>", "<fim-repo>", "<REP>", etc.
-            if (special_fim_rep_id == LLAMA_TOKEN_NULL) {
-                if (false
-                        || t.first == "<|fim_repo|>"  // Qwen
-                        || t.first == "<|repo_name|>"
-                        || t.first == "<fim-repo>"
-                        || t.first == "<REPO>"
-                        || t.first == "<reponame>"    // Granite
-                        ) {
-                    special_fim_rep_id = t.second;
-                    if ((attr & LLAMA_TOKEN_ATTR_CONTROL) == 0) {
-                        LLAMA_LOG_WARN("%s: control-looking token: %6d '%s' was not control-type; this is probably a bug in the model. its type will be overridden\n",
-                                __func__, t.second, t.first.c_str());
-                        attr = (llama_token_attr) (attr | LLAMA_TOKEN_ATTR_CONTROL);
-                    }
-                }
-            }
-
-            // find FIM_SEP token: "<|file_sep|>"
-            if (special_fim_sep_id == LLAMA_TOKEN_NULL) {
-                if (false
-                        || t.first == "<|file_sep|>" // Qwen
-                        || t.first == "<|plamo:file_separator|>" // PLaMo-2/3
-                        ) {
-                    special_fim_sep_id = t.second;
-                    if ((attr & LLAMA_TOKEN_ATTR_CONTROL) == 0) {
-                        LLAMA_LOG_WARN("%s: control-looking token: %6d '%s' was not control-type; this is probably a bug in the model. its type will be overridden\n",
-                                __func__, t.second, t.first.c_str());
-                        attr = (llama_token_attr) (attr | LLAMA_TOKEN_ATTR_CONTROL);
-                    }
+                    break;
                 }
             }
         }

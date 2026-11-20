@@ -218,8 +218,8 @@
    "sloc": 3148
   },
   "src/llama-vocab.cpp": {
-   "decisions": 893,
-   "sloc": 3611
+   "decisions": 823,
+   "sloc": 3570
   },
   "src/unicode.cpp": {
    "decisions": 458,
@@ -1251,13 +1251,13 @@
    "sloc": 133
   },
   "src/llama-vocab.cpp::load": {
-   "decisions": 276,
+   "decisions": 206,
    "line": 2401,
-   "sloc": 773
+   "sloc": 732
   },
   "src/llama-vocab.cpp::tokenize": {
    "decisions": 66,
-   "line": 3636,
+   "line": 3587,
    "sloc": 214
   },
   "src/models/deepseek41.cpp::load_arch_hparams": {
@@ -1437,8 +1437,8 @@
   }
  },
  "totals": {
-  "file_decisions": 50103,
+  "file_decisions": 50033,
   "files": 67,
-  "function_decisions": 23332
+  "function_decisions": 23262
  }
 }
