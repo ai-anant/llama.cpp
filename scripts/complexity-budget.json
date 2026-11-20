@@ -42,8 +42,8 @@
    "sloc": 3382
   },
   "ggml/src/ggml-cpu/ggml-cpu.c": {
-   "decisions": 554,
-   "sloc": 2546
+   "decisions": 548,
+   "sloc": 2541
   },
   "ggml/src/ggml-cpu/kleidiai/kleidiai.cpp": {
    "decisions": 452,
@@ -412,7 +412,7 @@
   },
   "ggml/src/ggml-cpu/ggml-cpu.c::ggml_node_work_size": {
    "decisions": 56,
-   "line": 2541,
+   "line": 2535,
    "sloc": 156
   },
   "ggml/src/ggml-cpu/ggml-cpu.cpp::ggml_backend_cpu_device_supports_op": {
@@ -1437,7 +1437,7 @@
   }
  },
  "totals": {
-  "file_decisions": 50109,
+  "file_decisions": 50103,
   "files": 67,
   "function_decisions": 23332
  }

@@ -1345,6 +1345,28 @@ static struct mul_mat_chunks mul_mat_plan_chunks(int64_t nr0, int64_t nr1, int n
     return res;
 }
 
+struct mul_mat_range {
+    int64_t r0_start, r0_end;
+    int64_t r1_start, r1_end;
+};
+
+// The (src0 rows x src1 rows) block this chunk is responsible for. Both matmuls
+// walk their work with exactly this mapping, so it lives here once.
+static struct mul_mat_range mul_mat_chunk_range(
+        const struct mul_mat_chunks plan, int64_t current_chunk, int64_t nr0, int64_t nr1) {
+    const int64_t ith0 = current_chunk % plan.nchunk0;
+    const int64_t ith1 = current_chunk / plan.nchunk0;
+
+    struct mul_mat_range res = {
+        plan.dr0 * ith0,
+        MIN(plan.dr0 * ith0 + plan.dr0, nr0),
+        plan.dr1 * ith1,
+        MIN(plan.dr1 * ith1 + plan.dr1, nr1),
+    };
+
+    return res;
+}
+
 // Dot kernels handle one row/col at a time, mmla kernels process two, but only
 // when neither the tensor nor this chunk is odd in the relevant dimension.
 static int64_t mul_mat_rows_per_vec_dot(
@@ -1501,18 +1523,13 @@ void ggml_compute_forward_mul_mat(
     int current_chunk = ith;
 
     while (current_chunk < nchunk0 * nchunk1) {
-        const int64_t ith0 = current_chunk % nchunk0;
-        const int64_t ith1 = current_chunk / nchunk0;
-
-        const int64_t ir0_start = dr0 * ith0;
-        const int64_t ir0_end = MIN(ir0_start + dr0, nr0);
-
-        const int64_t ir1_start = dr1 * ith1;
-        const int64_t ir1_end = MIN(ir1_start + dr1, nr1);
+        const struct mul_mat_range range = mul_mat_chunk_range(plan, current_chunk, nr0, nr1);
 
         const int64_t num_rows_per_vec_dot = mul_mat_rows_per_vec_dot(
-                vec_dot_num_rows, nr0, ne11, ir0_start, ir0_end, ir1_start, ir1_end);
-        ggml_compute_forward_mul_mat_one_chunk(params, dst, src0->type, num_rows_per_vec_dot, ir0_start, ir0_end, ir1_start, ir1_end);
+                vec_dot_num_rows, nr0, ne11, range.r0_start, range.r0_end, range.r1_start, range.r1_end);
+
+        ggml_compute_forward_mul_mat_one_chunk(params, dst, src0->type, num_rows_per_vec_dot,
+                range.r0_start, range.r0_end, range.r1_start, range.r1_end);
 
         if (nth >= nchunk0 * nchunk1) {
             break;
@@ -1746,46 +1763,23 @@ static void ggml_compute_forward_mul_mat_id(
         const int64_t nr0 = ne01;
         const int64_t nr1 = cne1;
 
-        int chunk_size = 16;
-        if (nr0 == 1 || nr1 == 1) {
-            chunk_size = 64;
-        }
-
-        // disable for NUMA
-        const bool disable_chunking = ggml_is_numa();
-
-        int64_t nchunk0 = (nr0 + chunk_size - 1) / chunk_size;
-        int64_t nchunk1 = (nr1 + chunk_size - 1) / chunk_size;
-
-        if (nchunk0 * nchunk1 < nth * 4 || disable_chunking) {
-            nchunk0 = nr0 > nr1 ? nth : 1;
-            nchunk1 = nr0 > nr1 ? 1 : nth;
-        }
-
-        const int64_t dr0 = (nr0 + nchunk0 - 1) / nchunk0;
-        const int64_t dr1 = (nr1 + nchunk1 - 1) / nchunk1;
+        // same partitioning as the dense matmul, per expert
+        const struct mul_mat_chunks plan = mul_mat_plan_chunks(nr0, nr1, nth);
 
         int current_chunk = ith;
 
         atomic_int * current_chunk_ctr = (atomic_int *)(atomic_current_chunk + cur_a);
 
-        while (current_chunk < nchunk0 * nchunk1) {
-            const int64_t ith0 = current_chunk % nchunk0;
-            const int64_t ith1 = current_chunk / nchunk0;
-
-            const int64_t ir0_start = dr0 * ith0;
-            const int64_t ir0_end = MIN(ir0_start + dr0, nr0);
-
-            const int64_t ir1_start = dr1 * ith1;
-            const int64_t ir1_end = MIN(ir1_start + dr1, nr1);
+        while (current_chunk < plan.nchunk0 * plan.nchunk1) {
+            const struct mul_mat_range range = mul_mat_chunk_range(plan, current_chunk, nr0, nr1);
 
             ggml_compute_forward_mul_mat_id_one_chunk(
                 dst, src0, src1, ids, cur_a,
-                ir0_start, ir0_end, ir1_start, ir1_end,
+                range.r0_start, range.r0_end, range.r1_start, range.r1_end,
                 src0_cur, matrix_rows, row_size, src1_cont, wdata
             );
 
-            if (nth >= nchunk0 * nchunk1) {
+            if (nth >= plan.nchunk0 * plan.nchunk1) {
                 break;
             }
 
